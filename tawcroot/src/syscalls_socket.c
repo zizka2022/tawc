@@ -627,9 +627,18 @@ static long handle_sendto(const tawcroot_syscall_args *args, ucontext_t *uc)
 	return rv;
 }
 
+/* struct ucred mirror (SO_PEERCRED out-value, SCM_CREDENTIALS data): pid, uid, gid — three
+ * 32-bit words. */
+struct tawc_ucred {
+	int32_t  pid;
+	uint32_t uid;
+	uint32_t gid;
+};
+_Static_assert(sizeof(struct tawc_ucred) == 12, "ucred ABI is 3 words");
+
 /* Local mirror of struct msghdr (64-bit ABI; matches the kernel's
- * user_msghdr layout). We only touch msg_name / msg_namelen; the iov /
- * control fields are forwarded as the guest gave them. */
+ * user_msghdr layout). We touch msg_name / msg_namelen and, for
+ * SCM_CREDENTIALS only, msg_control; iov is forwarded as given. */
 struct tawc_msghdr {
 	uint64_t msg_name;        /* void*  */
 	uint32_t msg_namelen;     /* socklen_t */
@@ -642,10 +651,79 @@ struct tawc_msghdr {
 	uint32_t _pad2;
 };
 
+/* struct cmsghdr mirror (64-bit ABI): data follows, 8-byte aligned. */
+struct tawc_cmsghdr {
+	uint64_t cmsg_len;
+	int32_t  cmsg_level;
+	int32_t  cmsg_type;
+};
+#define SCM_CREDENTIALS_TYPE 2
+#define CMSG_ALIGN8(n) (((n) + 7) & ~(uint64_t)7)
+
+/* Largest control buffer we rewrite (stack_budget.h: < 256 on the
+ * frame); bigger ones forward untouched. A credential plus a few fds fits. */
+#define CRED_CTL_MAX 192
+
+/* SCM_CREDENTIALS carrying the virtual root identity: the kernel checks
+ * the uid/gid against the REAL ones and fails the send with EPERM, so a
+ * PulseAudio client (which sends its credentials with the auth packet)
+ * never connects. Swap virtual 0 for the real id — the send-side mirror
+ * of the SO_PEERCRED rewrite below. Walks only the cmsg headers, so
+ * SCM_RIGHTS traffic (every Wayland fd) costs one small copy; the
+ * buffer is copied into `ctl` and repointed only when a credential
+ * needs rewriting. Returns 1 if `mh` now points at `ctl`, else 0. */
+static int rewrite_scm_credentials(struct tawc_msghdr *mh,
+				   unsigned char *ctl)
+{
+	uint64_t len = mh->msg_controllen;
+	if (!mh->msg_control || len < sizeof(struct tawc_cmsghdr) ||
+	    len > CRED_CTL_MAX)
+		return 0;
+	const unsigned char *g = (const unsigned char *)(uintptr_t)mh->msg_control;
+	uint64_t off = 0;
+	int found = 0;
+	while (off + sizeof(struct tawc_cmsghdr) <= len) {
+		struct tawc_cmsghdr ch;
+		if (tawc_copy_from_guest(&ch, sizeof ch, g + off) < 0) return 0;
+		if (ch.cmsg_len < sizeof ch || off + ch.cmsg_len > len) break;
+		if (ch.cmsg_level == SOL_SOCKET_LEVEL &&
+		    ch.cmsg_type == SCM_CREDENTIALS_TYPE &&
+		    ch.cmsg_len >= sizeof ch + sizeof(struct tawc_ucred)) {
+			found = 1;
+			break;
+		}
+		off += CMSG_ALIGN8(ch.cmsg_len);
+	}
+	if (!found) return 0;
+	if (tawc_copy_from_guest(ctl, (size_t)len, g) < 0) return 0;
+	uint32_t real_uid = (uint32_t)tawc_getuid();
+	uint32_t real_gid = (uint32_t)TAWC_RAW(TAWC_SYS_getgid, 0, 0, 0, 0, 0, 0);
+	int edited = 0;
+	for (off = 0; off + sizeof(struct tawc_cmsghdr) <= len;) {
+		struct tawc_cmsghdr ch;
+		memcpy(&ch, ctl + off, sizeof ch);
+		if (ch.cmsg_len < sizeof ch || off + ch.cmsg_len > len) break;
+		if (ch.cmsg_level == SOL_SOCKET_LEVEL &&
+		    ch.cmsg_type == SCM_CREDENTIALS_TYPE &&
+		    ch.cmsg_len >= sizeof ch + sizeof(struct tawc_ucred)) {
+			struct tawc_ucred cred;
+			unsigned char *p = ctl + off + sizeof ch;
+			memcpy(&cred, p, sizeof cred);
+			if (cred.uid == 0) { cred.uid = real_uid; edited = 1; }
+			if (cred.gid == 0) { cred.gid = real_gid; edited = 1; }
+			memcpy(p, &cred, sizeof cred);
+		}
+		off += CMSG_ALIGN8(ch.cmsg_len);
+	}
+	if (!edited) return 0;
+	mh->msg_control = (uint64_t)(uintptr_t)ctl;
+	return 1;
+}
+
 /* sendmsg(fd, msghdr*, flags): the destination sockaddr lives in
  * msg_name. Copy the msghdr, translate msg_name into a stack-local
  * sockaddr, repoint, and re-issue. Same connectionless-client failure
- * mode as sendto. */
+ * mode as sendto. SCM_CREDENTIALS: see rewrite_scm_credentials. */
 static long handle_sendmsg(const tawcroot_syscall_args *args, ucontext_t *uc)
 {
 	(void)uc;
@@ -657,7 +735,12 @@ static long handle_sendmsg(const tawcroot_syscall_args *args, ucontext_t *uc)
 	struct tawc_msghdr mh;
 	long e = tawc_copy_from_guest(&mh, sizeof mh, gmsg);
 	if (e < 0) return TAWC_EFAULT;
+	_Alignas(8) unsigned char ctl[CRED_CTL_MAX];
+	int ctl_edit = rewrite_scm_credentials(&mh, ctl);
 	if (mh.msg_name == 0 || mh.msg_namelen == 0) {
+		if (ctl_edit)
+			return TAWC_RAW(TAWC_SYS_sendmsg, args->a, (long)&mh,
+					args->c, 0, 0, 0);
 		return TAWC_RAW(TAWC_SYS_sendmsg, args->a, args->b, args->c,
 				0, 0, 0);
 	}
@@ -669,6 +752,9 @@ static long handle_sendmsg(const tawcroot_syscall_args *args, ucontext_t *uc)
 		&un_out, &new_addrlen, 0, &close_fd);
 	if (t < 0) return t;
 	if (t == 0) {
+		if (ctl_edit)
+			return TAWC_RAW(TAWC_SYS_sendmsg, args->a, (long)&mh,
+					args->c, 0, 0, 0);
 		return TAWC_RAW(TAWC_SYS_sendmsg, args->a, args->b, args->c,
 				0, 0, 0);
 	}
@@ -801,15 +887,6 @@ static long handle_accept4(const tawcroot_syscall_args *args, ucontext_t *uc)
 				    args->b, args->c, args->d);
 }
 
-/* struct ucred mirror (SO_PEERCRED out-value): pid, uid, gid — three
- * 32-bit words. */
-struct tawc_ucred {
-	int32_t  pid;
-	uint32_t uid;
-	uint32_t gid;
-};
-_Static_assert(sizeof(struct tawc_ucred) == 12, "ucred ABI is 3 words");
-
 /* getsockopt(SOL_SOCKET, SO_PEERCRED) hands back KERNEL credentials,
  * bypassing the virtual identity: server getuid() says 0 but the peer
  * shows the real app uid, so any peer-cred-authenticating server (tmux,
@@ -822,10 +899,11 @@ _Static_assert(sizeof(struct tawc_ucred) == 12, "ucred ABI is 3 words");
  * unreachable from here) — same bounded stance as the rest of the
  * identity model.
  *
- * SCM_CREDENTIALS ancillary data is NOT given the same treatment: that
- * would mean trapping recvmsg, which the header comment above rules out
- * (hottest receive syscall; every Wayland/X11/dbus message). No known
- * workload authenticates that way; revisit if one does.
+ * Received SCM_CREDENTIALS ancillary data is NOT given the same
+ * treatment: that would mean trapping recvmsg, which the header comment
+ * above rules out (hottest receive syscall; every Wayland/X11/dbus
+ * message). No known workload authenticates that way; revisit if one
+ * does. Sent credentials are rewritten (rewrite_scm_credentials).
  *
  * Everything that isn't SO_PEERCRED forwards verbatim. The rewrite path
  * mirrors getname_with_reverse: issue the syscall into a local buffer,
