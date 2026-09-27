@@ -666,6 +666,22 @@ pub extern "system" fn Java_me_phie_tawc_compositor_NativeBridge_nativeOnActivit
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_me_phie_tawc_compositor_NativeBridge_nativeOnActivityDensityChanged(
+    mut env: JNIEnv,
+    _class: JClass,
+    activity_id: JString,
+    ratio: f32,
+) {
+    let activity_id = jstring_to_id(&mut env, activity_id);
+    if !(ratio.is_finite() && ratio > 0.0) {
+        log::error!("Ignoring invalid density ratio {} for {}", ratio, activity_id);
+        return;
+    }
+    info!("nativeOnActivityDensityChanged({}, {:.3})", activity_id, ratio);
+    host::send_surface_event(SurfaceEvent::DensityChanged { activity_id, ratio: ratio as f64 });
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_me_phie_tawc_compositor_NativeBridge_nativeOnActivityFullscreenChanged(
     mut env: JNIEnv,
     _class: JClass,
