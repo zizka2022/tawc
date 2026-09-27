@@ -226,7 +226,10 @@ The JNI layer translates Android `KEYCODE_*` values to Linux evdev keycodes
 with `compositor/src/keymap.rs` and sends host-scoped `SurfaceEvent::HardwareKey`
 events on the surface event channel. Using the surface channel keeps hardware
 keys ordered with Android `FocusChanged` events and lets the compositor ignore
-stale keys from background/destroyed Activities.
+stale keys from destroyed Activities. A key from a live host that is not the
+foreground host promotes it (as `FocusChanged` would): Android only delivers
+keys to a focused window, and on DeX each display keeps its own focused window,
+so returning to a DeX window after using the phone fires no focus event.
 
 The compositor emits real `wl_keyboard` press/release events to the current
 keyboard focus. Printable keys stay key events; clients/toolkits use normal

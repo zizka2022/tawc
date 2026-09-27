@@ -234,8 +234,33 @@ fn send_keyboard_key_state(data: &mut TawcState, evdev_keycode: u32, pressed: bo
     }
 }
 
-fn host_can_receive_hardware_key(data: &TawcState, activity_id: &ActivityId) -> bool {
-    data.desktop.foreground_host() == Some(activity_id) && data.hosts.contains_key(activity_id)
+/// Android only delivers keys to a focused window, so a key from a live host
+/// proves it has focus. On DeX each display keeps its own focused window, and
+/// returning to one whose display focus never changed fires no FocusChanged;
+/// promote the host here instead of dropping its keys.
+fn take_hardware_key_focus(data: &mut TawcState, activity_id: &ActivityId) -> bool {
+    if !data.hosts.contains_key(activity_id) {
+        return false;
+    }
+    if data.desktop.foreground_host() != Some(activity_id) {
+        set_host_foreground(data, activity_id, true);
+        data.desktop.set_foreground_host(Some(activity_id.clone()));
+        data.sync_advertised_output_to_host_if_visible(activity_id);
+        // Keep a focus the user clicked into (a popup, a second toplevel).
+        let focus = data.seat.get_keyboard().and_then(|k| k.current_focus());
+        let focus_in_host = focus
+            .as_ref()
+            .and_then(|surface| host_for_surface(data, surface))
+            .as_ref()
+            == Some(activity_id);
+        if !focus_in_host {
+            let target = data.first_toplevel_for_host(activity_id);
+            data.set_input_focus(target.as_ref());
+        }
+        data.needs_render = true;
+        data.sync_desktop_hosts();
+    }
+    true
 }
 
 fn handle_hardware_key(
@@ -247,7 +272,7 @@ fn handle_hardware_key(
 ) {
     let key = (activity_id.clone(), evdev_keycode);
     if pressed {
-        if !host_can_receive_hardware_key(data, activity_id) {
+        if !take_hardware_key_focus(data, activity_id) {
             return;
         }
         if data.hardware_keys_down.insert(key) {
