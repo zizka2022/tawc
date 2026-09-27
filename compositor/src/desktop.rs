@@ -67,6 +67,21 @@ impl DesktopRegistry {
             .cloned()
     }
 
+    /// Every host whose windows are on screen: the focused host first, then
+    /// every other host whose Activity still holds a live surface. On a single
+    /// display that is just the focused host (Android drops a stopped
+    /// Activity's surface), but with an external display (DeX) or freeform
+    /// windows several Activities are visible at once and all of them render.
+    pub fn visible_host_ids(&self, hosts: &HashMap<ActivityId, OutputHost>) -> Vec<ActivityId> {
+        let mut ids: Vec<ActivityId> = self.visible_host_id(hosts).into_iter().collect();
+        for (host_id, host) in hosts {
+            if host.egl_surface.is_some() && !ids.contains(host_id) {
+                ids.push(host_id.clone());
+            }
+        }
+        ids
+    }
+
     pub fn assign_wayland_toplevel(
         &mut self,
         surface: WlSurface,
@@ -176,9 +191,11 @@ impl DesktopRegistry {
         self.windows.values()
     }
 
-    pub fn visible_space(&self, hosts: &HashMap<ActivityId, OutputHost>) -> Option<&Space<Window>> {
-        let host_id = self.visible_host_id(hosts)?;
-        self.host_spaces.get(&host_id)
+    pub fn visible_spaces(&self, hosts: &HashMap<ActivityId, OutputHost>) -> Vec<&Space<Window>> {
+        self.visible_host_ids(hosts)
+            .iter()
+            .filter_map(|host_id| self.host_spaces.get(host_id))
+            .collect()
     }
 
     pub fn host_space(&self, host_id: &ActivityId) -> Option<&Space<Window>> {
@@ -220,10 +237,10 @@ impl DesktopRegistry {
     pub fn sync_hosts(&mut self, hosts: &HashMap<ActivityId, OutputHost>, output: &Output) {
         let mut assigned_hosts = HashSet::new();
         assigned_hosts.extend(self.surface_to_host.values().cloned());
-        let visible_host = self.visible_host_id(hosts);
+        let visible_hosts = self.visible_host_ids(hosts);
         for host_id in hosts.keys().chain(assigned_hosts.iter()) {
             let space = self.host_spaces.entry(host_id.clone()).or_default();
-            if visible_host.as_ref() == Some(host_id) {
+            if visible_hosts.contains(host_id) {
                 space.map_output(output, (0, 0));
             } else {
                 space.unmap_output(output);

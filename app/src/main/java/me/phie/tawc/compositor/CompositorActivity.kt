@@ -156,9 +156,16 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
                 NativeBridge.activeInputConnection = null
             }
             NativeBridge.clearActivityImeState(activityId)
-            NativeBridge.nativeOnActivityDestroyed(activityId)
+            // A recreation (config change the manifest doesn't handle) comes
+            // back with the same activityId and re-registers its surface, so
+            // keep the host and its windows instead of closing them.
+            if (!isChangingConfigurations) {
+                NativeBridge.nativeOnActivityDestroyed(activityId)
+            }
             compositorService?.unregisterActivity(activityId)
-            compositorService?.removeWindow(activityId)
+            if (!isChangingConfigurations) {
+                compositorService?.removeWindow(activityId)
+            }
             try {
                 unbindService(serviceConnection)
             } catch (e: IllegalArgumentException) {

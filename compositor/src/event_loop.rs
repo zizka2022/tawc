@@ -53,7 +53,7 @@ struct TouchResolution {
     keyboard_focus: KeyboardFocusAction,
 }
 
-/// Hit-test the visible host's window stack at a compositor-space logical
+/// Hit-test a visible host's window stack at a compositor-space logical
 /// point. Shared by touch and pointer: both honour the visible-host guard
 /// and `WindowSurfaceType::ALL`, which respects `wl_surface.set_input_region`
 /// (Firefox/WebRender attaches render-only children with an empty region).
@@ -65,11 +65,13 @@ fn surface_at(
     activity_id: &ActivityId,
     location: Point<f64, Logical>,
 ) -> Option<(WlSurface, Point<f64, Logical>)> {
-    if data.desktop_visible_host_id().as_ref() != Some(activity_id) {
+    // Any visible host, not just the focused one: on an external display a
+    // click on an unfocused window can arrive before its focus change does.
+    if !data.host_is_visible(activity_id) {
         return None;
     }
 
-    let Some(visible_space) = data.desktop.visible_space(&data.hosts) else {
+    let Some(visible_space) = data.desktop.host_space(activity_id) else {
         return None;
     };
     if let Some((window, window_location)) = visible_space.element_under(location) {
@@ -527,8 +529,8 @@ pub fn run(
             | PointerEvent::Button { activity_id, .. }
             | PointerEvent::Axis { activity_id, .. } => activity_id.clone(),
         };
-        // Host scoping, like touch: only the visible host drives the pointer.
-        if data.desktop_visible_host_id().as_ref() != Some(&activity_id) {
+        // Host scoping, like touch: only visible hosts drive the pointer.
+        if !data.host_is_visible(&activity_id) {
             return;
         }
 
@@ -851,16 +853,17 @@ pub fn run(
             data.needs_render = true;
         }
 
-        // 2. Render only the foreground bound host. Background hosts neither
-        // render nor get frame callbacks; hidden commits can mark the
-        // compositor dirty without triggering hidden texture imports.
+        // 2. Render every visible bound host (the focused one plus any other
+        // Activity still on screen, e.g. on a DeX display). Hosts without a
+        // surface neither render nor get frame callbacks; hidden commits can
+        // mark the compositor dirty without triggering hidden texture imports.
         if data.needs_render {
-            if render_visible_host(data) {
+            if render_visible_hosts(data) {
                 data.needs_render = false;
             }
         }
 
-        // 3. Frame callbacks for the visible host only. They are still sent
+        // 3. Frame callbacks for visible hosts only. They are still sent
         // on idle ticks so visible clients can submit new buffers even when
         // we skipped rendering.
         let time = data.start_time.elapsed().as_millis() as u32;
@@ -1023,36 +1026,36 @@ fn check_idle(data: &mut TawcState) {
     }
 }
 
-fn render_visible_host(data: &mut TawcState) -> bool {
-    let Some(id) = data.desktop_visible_host_id() else {
-        return false;
-    };
-    let Some(host) = data.hosts.get(&id) else {
-        return false;
-    };
-    if host.egl_surface.is_none() {
-        return false;
+/// Render every visible host that has a bound surface. Returns true when at
+/// least one frame was drawn, so the caller can clear `needs_render`.
+fn render_visible_hosts(data: &mut TawcState) -> bool {
+    let mut any_rendered = false;
+    for id in data.desktop.visible_host_ids(&data.hosts) {
+        if data.hosts.get(&id).is_none_or(|host| host.egl_surface.is_none()) {
+            continue;
+        }
+
+        // Take the host out of the map so render_frame can hold a
+        // `&mut OutputHost` while still passing `&mut TawcState`.
+        let Some(mut host) = data.hosts.remove(&id) else {
+            continue;
+        };
+        let rendered = match render::render_frame(data, &mut host) {
+            Ok(()) => true,
+            Err(e) => {
+                error!("Render error on host {}: {}", id, e);
+                false
+            }
+        };
+        data.hosts.insert(id, host);
+        any_rendered |= rendered;
     }
 
-    // Take the host out of the map so render_frame can hold a
-    // `&mut OutputHost` while still passing `&mut TawcState`.
-    let Some(mut host) = data.hosts.remove(&id) else {
-        return false;
-    };
-    let rendered = match render::render_frame(data, &mut host) {
-        Ok(()) => true,
-        Err(e) => {
-            error!("Render error on host {}: {}", id, e);
-            false
-        }
-    };
-    data.hosts.insert(id, host);
-
-    if rendered {
+    if any_rendered {
         data.frame_count += 1;
         data.last_rendered_toplevels = toplevel_count(data);
     }
-    rendered
+    any_rendered
 }
 
 fn toplevel_count(data: &TawcState) -> usize {
@@ -1101,6 +1104,9 @@ fn handle_surface_event(
             crate::set_activity_fullscreen_from_native(&activity_id, fullscreen);
             data.sync_advertised_output_to_host_if_visible(&activity_id);
             data.sync_desktop_hosts();
+            // On screen again: resume its toplevels. Folded into the
+            // size configure below so the client sees one configure.
+            set_host_suspended(data, &activity_id, false, false);
             // Reconfigure existing toplevels with the new logical size.
             reconfigure_all_toplevels(data);
             data.needs_render = true;
@@ -1110,7 +1116,7 @@ fn handle_surface_event(
                 data.hosts.get(&activity_id).map(|h| h.egl_surface.is_some()).unwrap_or(false),
                 data.hosts.len(),
             );
-            if render_visible_host(data) {
+            if render_visible_hosts(data) {
                 data.needs_render = false;
             }
         }
@@ -1126,7 +1132,7 @@ fn handle_surface_event(
             data.sync_desktop_hosts();
             reconfigure_all_toplevels(data);
             data.needs_render = true;
-            if render_visible_host(data) {
+            if render_visible_hosts(data) {
                 data.needs_render = false;
             }
         }
@@ -1136,6 +1142,10 @@ fn handle_surface_event(
                 host.drop_surface();
                 info!("Host {} surface dropped (record retained)", activity_id);
             }
+            // Off screen: stop its clients drawing and drop it from the
+            // visible set (see DesktopRegistry::visible_host_ids).
+            set_host_suspended(data, &activity_id, true, true);
+            data.sync_desktop_hosts();
         }
         SurfaceEvent::ActivityDestroyed { activity_id } => {
             clear_pointer_focus_for_host(data, &activity_id);
@@ -1262,36 +1272,65 @@ fn live_surfaces(state: &TawcState) -> Vec<WlSurface> {
     surfaces
 }
 
-/// Flip a host's foreground state and notify assigned toplevels via
-/// `Activated`/`Suspended` configure events. Only sends a configure when
-/// the pending state actually changed — Vulkan WSI clients (vkcube) hang
-/// after recreating their swapchain on a redundant Activated configure
-/// that arrives mid-frame, so we go through `send_pending_configure`
-/// rather than the unconditional `send_configure` and skip the no-op
-/// case where the state already matched.
+/// Flip a host's focus. `Activated` follows Android window focus; losing
+/// focus does not suspend, since an unfocused Activity can still be on screen
+/// (another display, freeform). `Suspended` follows the surface instead, see
+/// `set_host_suspended`.
 fn set_host_foreground(state: &mut TawcState, host_id: &crate::host::ActivityId, foreground: bool) {
+    let suspended = foreground.then_some(false);
+    update_host_toplevel_states(state, host_id, Some(foreground), suspended, true);
+    if let Some(host) = state.hosts.get_mut(host_id) {
+        host.foreground = foreground;
+    }
+}
+
+/// Suspend a host's toplevels while its Activity has no surface (stopped or
+/// not yet registered) and resume them when one arrives. With `send` false
+/// only the pending state changes, for callers that configure right after.
+fn set_host_suspended(
+    state: &mut TawcState,
+    host_id: &crate::host::ActivityId,
+    suspended: bool,
+    send: bool,
+) {
+    let activated = suspended.then_some(false);
+    update_host_toplevel_states(state, host_id, activated, Some(suspended), send);
+}
+
+/// Apply `Activated`/`Suspended` changes to a host's toplevels. Only sends a
+/// configure when the pending state actually changed — Vulkan WSI clients
+/// (vkcube) hang after recreating their swapchain on a redundant Activated
+/// configure that arrives mid-frame, so we go through
+/// `send_pending_configure` rather than the unconditional `send_configure`.
+fn update_host_toplevel_states(
+    state: &mut TawcState,
+    host_id: &crate::host::ActivityId,
+    activated: Option<bool>,
+    suspended: Option<bool>,
+    send: bool,
+) {
     use wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
 
     let host_ready = state.host_logical_size(host_id).is_some();
     for t in state.wayland_toplevels_for_host(host_id) {
         t.with_pending_state(|s| {
-            if foreground {
+            if activated == Some(true) {
                 s.states.set(XdgState::Activated);
-                s.states.unset(XdgState::Suspended);
-            } else {
+            } else if activated == Some(false) {
                 s.states.unset(XdgState::Activated);
-                // xdg-shell v6 introduced `Suspended`. Smithay only emits
-                // it to clients on protocol version >= 6; for older
-                // clients the unset Activated is the signal.
+            }
+            // xdg-shell v6 introduced `Suspended`. Smithay only emits it to
+            // clients on protocol version >= 6; for older clients the unset
+            // Activated is the signal.
+            if suspended == Some(true) {
                 s.states.set(XdgState::Suspended);
+            } else if suspended == Some(false) {
+                s.states.unset(XdgState::Suspended);
             }
         });
-        if host_ready {
+        if send && host_ready {
             t.send_pending_configure();
         }
-    }
-    if let Some(host) = state.hosts.get_mut(host_id) {
-        host.foreground = foreground;
     }
 }
 
