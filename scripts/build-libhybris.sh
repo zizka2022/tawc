@@ -251,7 +251,13 @@ CONFIGURE_ARGS=(
     --enable-adreno-quirks
     --enable-mali-quirks
     --enable-property-cache
-    --with-default-hybris-ld-library-path=/vendor/lib64/egl:/vendor/lib64/hw:/vendor/lib64:/system/lib64
+    # Driver dirs first, then /system before the rest of /vendor. This path
+    # is searched ahead of the namespace config, so a system library's
+    # DT_NEEDED would otherwise bind to a same-named vendor copy: on Samsung
+    # (S25 Ultra, Android 16) /system/lib64/libziparchive.so then found
+    # /vendor/lib64/libbase.so, which lacks MappedFile::Create(int, ...), and
+    # every Vulkan client failed to load libvulkan.so.
+    --with-default-hybris-ld-library-path=/vendor/lib64/egl:/vendor/lib64/hw:/system/lib64:/vendor/lib64
 )
 
 # The build tree is in-tree (`deps/libhybris/hybris/`), so leftover
@@ -346,6 +352,23 @@ if ! "${HOST_TRIPLE}-readelf" -d "$LIB_DIR/libhybris-common.so.1.0.0" \
     echo "ERROR: libhybris-common.so doesn't NEEDED libc.so.6 (glibc); wrong libc?" >&2
     exit 1
 fi
+
+# ── Wayland plugin DT_NEEDED ──
+# The plugins link against the empty stubs above, and the cross toolchain's
+# default --as-needed drops a stub that provides no symbols, so the
+# DT_NEEDED entries never land. Clients that don't link wayland themselves
+# (vulkaninfo, eglinfo) then fail with "undefined symbol:
+# wl_egl_window_create" / "wl_buffer_interface". Record them explicitly.
+add_needed() {
+    local so="$1"; shift
+    for lib in "$@"; do
+        if ! "${HOST_TRIPLE}-readelf" -d "$so" | grep -q "NEEDED.*\[$lib\]"; then
+            patchelf --add-needed "$lib" "$so"
+        fi
+    done
+}
+add_needed "$LIB_DIR/libhybris/eglplatform_wayland.so" libwayland-client.so.0
+add_needed "$LIB_DIR/libhybris/vulkanplatform_wayland.so" libwayland-client.so.0 libwayland-egl.so.1
 
 # ── GL shims ──
 # Self-contained shim directory that goes alongside libhybris in the
