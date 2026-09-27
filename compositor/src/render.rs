@@ -619,24 +619,23 @@ pub fn render_frame(
 // ---------------------------------------------------------------------------
 
 /// Send frame-done callbacks for windows Smithay currently considers mapped
-/// on TAWC's desktop output. Android host foreground/background transitions
-/// update the visible desktop projection; Smithay owns the popup/subsurface traversal.
+/// on TAWC's desktop output, across every visible host (see
+/// `DesktopRegistry::visible_host_ids`). Hosts without a live surface get none;
+/// Smithay owns the popup/subsurface traversal.
 pub fn send_frame_callbacks(state: &TawcState, time: u32) {
     let output = &state.output;
     let time = Duration::from_millis(time as u64);
 
-    let Some(visible_space) = state.desktop.visible_space(&state.hosts) else {
-        return;
-    };
-
-    for window in visible_space.elements() {
-        window.send_frame(
-            output,
-            time,
-            None,
-            |_: &WlSurface, _: &smithay::wayland::compositor::SurfaceData| {
-                Some(output.clone())
-            },
-        );
+    for visible_space in state.desktop.visible_spaces(&state.hosts) {
+        for window in visible_space.elements() {
+            window.send_frame(
+                output,
+                time,
+                None,
+                |_: &WlSurface, _: &smithay::wayland::compositor::SurfaceData| {
+                    Some(output.clone())
+                },
+            );
+        }
     }
 }

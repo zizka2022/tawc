@@ -634,6 +634,12 @@ impl TawcState {
         self.desktop.visible_host_id(&self.hosts)
     }
 
+    /// Whether `host_id` is on screen, focused or not (see
+    /// `DesktopRegistry::visible_host_ids`).
+    pub fn host_is_visible(&self, host_id: &ActivityId) -> bool {
+        self.desktop.visible_host_ids(&self.hosts).contains(host_id)
+    }
+
     pub fn sync_primary_output_to_host(&mut self, host_id: &ActivityId) {
         let Some(host) = self.hosts.get(host_id) else {
             return;

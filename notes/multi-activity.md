@@ -281,6 +281,30 @@ Configure-event sequencing:
 The single-output choice is reversible. Once we want freeform windowing or
 external displays, we move to one wl_output per OutputHost.
 
+## Visible vs focused hosts (external displays)
+
+With an external display (Samsung DeX) or freeform windows, several
+`CompositorActivity` windows are on screen at once but only one has
+Android window focus. So "visible" and "focused" are tracked apart:
+
+- **Visible** = the focused host plus every host whose Activity holds a
+  live surface (`DesktopRegistry::visible_host_ids`). All visible hosts
+  render, get frame callbacks, have the output mapped into their `Space`,
+  and accept touch/pointer input.
+- **Focused** (`foreground_host`) still drives keyboard/IME focus,
+  `Activated`, and the advertised `wl_output` mode.
+- `Suspended` follows the surface, not focus: set on `SurfaceDestroyed`,
+  cleared on `Register`. Losing focus only clears `Activated`.
+- `CompositorActivity` handles `smallestScreenSize|screenLayout|density|
+  uiMode|keyboard|navigation` config changes itself, so moving a task to
+  another display (or attaching a keyboard) does not recreate it. If a
+  recreation still happens, `onDestroy` skips the close when
+  `isChangingConfigurations`, and the new instance re-registers the same
+  host.
+
+Still single: one `wl_output` and one global scale, so mixed-DPI displays
+share the phone's scale.
+
 ## Input / focus / IME
 
 - Touch from a SurfaceView is delivered already tagged with the
