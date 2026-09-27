@@ -116,14 +116,16 @@ size_t tawcroot_proc_magic_link_prefix(const char *suf);
  *             the same line dirfd resolution draws for out-of-view
  *             dirfds. Also what keeps /dev/stdin and /dev/fd/<n> (pipes,
  *             sockets, process substitution) working.
- *   ROOT_OWN  our own root. The kernel resolves it to the HOST root
+ *   ROOT_OWN  our own root, or that of a sibling guest with the same
+ *             root (PipeWire's flatpak check opens a client's
+ *             /proc/<pid>/root). The kernel resolves it to the HOST root
  *             (tawcroot never chroots), where a real chroot would give
  *             the guest's root — so it is rewritten, not refused.
  *   CONTAIN   everything else (cwd, any other process's link): resolve
  *             through the kernel, then require the target to be in view.
  *
- * Costs one /proc/<n>/status read for a numeric pid that isn't ours,
- * and only after the grammar has matched. */
+ * Costs one /proc/<n>/status read (root links: plus two stats) for a
+ * numeric pid that isn't ours, and only after the grammar has matched. */
 #define TAWCROOT_PROC_MAGIC_NONE      0
 #define TAWCROOT_PROC_MAGIC_FD_OWN    1
 #define TAWCROOT_PROC_MAGIC_ROOT_OWN  2

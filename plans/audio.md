@@ -1,10 +1,16 @@
 # Audio Bridge Plan
 
-This is the planned direction for Linux app audio in tawc. Status: the
-Android half of playback exists — `compositor/AudioBridge.kt` creates the
-`audio-out-0` FIFO in the shared dir and plays s16le/stereo/48 kHz through an
-AudioTrack (paused while the writer is quiet). Nothing in the app starts a
-rootfs audio server yet; see "First Milestones".
+This is the planned direction for Linux app audio in tawc. Status: playback
+works end to end. `compositor/AudioBridge.kt` creates the `audio-out-0` FIFO
+in the shared dir and plays s16le/stereo/48 kHz through an AudioTrack (paused
+while the writer is quiet). `AudioInstallProvider` ships the pipe-tunnel sink
+as a PipeWire drop-in plus `/usr/lib/tawc/audio-session`, which
+`compositor/RootfsAudio.kt` runs in one rootfs for the compositor's lifetime
+(the distro's `pipewire`, `wireplumber`, `pipewire-pulse` must be installed;
+nothing installs them yet). tawcroot answers a sibling's `/proc/<pid>/root`
+with the guest root, so PipeWire's flatpak check passes with stock config.
+Milestone 3: start/stop with the compositor is done; underrun logging is not.
+Capture is not started.
 
 ## Goal
 
