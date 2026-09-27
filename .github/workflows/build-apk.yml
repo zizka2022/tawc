@@ -25,6 +25,9 @@ jobs:
       NDK_VERSION: 27.2.12479018
       CMDLINE_TOOLS_ZIP: commandlinetools-linux-13114758_latest.zip
       CARGO_TERM_COLOR: always
+      # SHA-256 of the certificate in DEBUG_KEYSTORE_B64; builds signed with anything
+      # else can't install over earlier ones, so the Checksum step enforces it.
+      DEBUG_CERT_SHA256: 1d023213c6fa11f51455508f595ddbd80a906d761e85dc9f21738c017d911afd
     steps:
       - name: Free runner disk
         run: |
@@ -94,9 +97,15 @@ jobs:
         run: |
           # A fixed key lets successive builds install over each other without
           # uninstalling (which would delete the installed distros).
-          mkdir -p ~/.android
+          # The container runs as root with HOME=/github/home, but Java's user.home
+          # is /root, and AGP falls back to a fresh random key there. Put the key in
+          # both places and point ANDROID_USER_HOME at it.
           if [ -n "$DEBUG_KEYSTORE_B64" ]; then
-            echo "$DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+            for d in "$HOME/.android" /root/.android; do
+              mkdir -p "$d"
+              echo "$DEBUG_KEYSTORE_B64" | base64 -d > "$d/debug.keystore"
+            done
+            echo "ANDROID_USER_HOME=$HOME/.android" >> "$GITHUB_ENV"
           else
             echo "::warning::DEBUG_KEYSTORE_B64 not set; using a throwaway debug key"
           fi
@@ -129,6 +138,13 @@ jobs:
           cd app/build/outputs/apk/debug
           mv app-debug.apk "tawc-debug-${GITHUB_SHA::7}.apk"
           sha256sum *.apk | tee SHA256SUMS
+          signer=$("$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs *.apk \
+            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          echo "signer: $signer"
+          if [ -n "$DEBUG_CERT_SHA256" ] && [ "$signer" != "$DEBUG_CERT_SHA256" ]; then
+            echo "::error::APK signed with $signer, expected $DEBUG_CERT_SHA256"
+            exit 1
+          fi
           df -h /
 
       - uses: actions/upload-artifact@v4
