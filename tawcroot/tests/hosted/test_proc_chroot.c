@@ -675,6 +675,16 @@ test(hosted_proc_magic_link_classify)
 	tawcroot_proc_magic_link_classify(own, &k);
 	test_int_eq(k, TAWCROOT_PROC_MAGIC_ROOT_OWN);
 
+	/* A sibling with our root (a fork shares the rootfs fd): rewritten
+	 * like our own. */
+	pid_t sib = fork();
+	if (sib == 0) { pause(); _exit(0); }
+	snprintf(own, sizeof own, "%d/root", (int)sib);
+	tawcroot_proc_magic_link_classify(own, &k);
+	kill(sib, SIGKILL);
+	waitpid(sib, 0, 0);
+	test_int_eq(k, TAWCROOT_PROC_MAGIC_ROOT_OWN);
+
 	/* Another process's root, and any cwd: contained. */
 	tawcroot_proc_magic_link_classify("1/root", &k);
 	test_int_eq(k, TAWCROOT_PROC_MAGIC_CONTAIN);

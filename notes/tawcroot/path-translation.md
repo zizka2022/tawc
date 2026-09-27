@@ -886,7 +886,11 @@ the pid/`task/<tid>/` grammar with the shadow classifiers:
   shortens the path, so nesting unwinds); exhausting the bound is
   `-ELOOP`, never a fall-through to the kernel. `chroot(2)`
   emulation composes: the rewrite targets whatever the current root
-  is.
+  is. A sibling guest whose reserved rootfs fd names the same inode
+  as ours counts as own root too (`shares_my_root`, proc_shadow.c):
+  in a real chroot its root is ours, and PipeWire's flatpak check
+  opens each client's `/proc/<pid>/root` — `-ENOENT` there made every
+  rootfs client look sandboxed and hang waiting for portal permission.
 - **Everything else resolves, then contains.** `readlink` exactly
   the link prefix, join the resolve-through remainder,
   `tawcroot_host_path_to_guest_abs` the result; out of view is

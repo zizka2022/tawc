@@ -3,6 +3,7 @@ package me.phie.tawc.install
 import android.content.Context
 import me.phie.tawc.GraphicsBackend
 import me.phie.tawc.compositor.CompositorService
+import me.phie.tawc.compositor.RootfsAudio
 import me.phie.tawc.session.Reason
 import me.phie.tawc.session.SessionHolds
 import kotlin.concurrent.thread
@@ -24,6 +25,7 @@ internal object UserRootfsSession {
         // Nothing starts the compositor here: its sockets always accept,
         // and the first connection starts it.
         CompositorService.ensureActivation(context)
+        RootfsAudio.noteUsed(rootfs)
         // The hold follows the process, so no caller has to cooperate.
         val hold = SessionHolds.acquire(Reason.Command(commandLabel(command)))
         val proc = try {

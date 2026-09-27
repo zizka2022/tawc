@@ -91,6 +91,7 @@ class CompositorService : Service() {
         if (hold == null) hold = SessionHolds.acquire(Reason.Compositor(0))
         ClipboardBridge.announceCurrentClip()
         AudioBridge.start(AppPaths.from(this).shareDir)
+        RootfsAudio.start(this)
         // Push the saved render-time settings into the compositor. The
         // Rust side defaults match the Settings defaults, so this is
         // only strictly needed when the user has flipped a toggle, but
@@ -134,6 +135,7 @@ class CompositorService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
+        RootfsAudio.stop()
         AudioBridge.stop()
         NativeBridge.nativeStopCompositor()
         compositorStopped()

@@ -172,6 +172,32 @@ static int resolve_mine(long tid)
 	return tid < 0 ? 1 : is_my_tid(tid);
 }
 
+/* 1 iff process `tid` is a tawcroot guest with our current root: the
+ * same fd number names the same inode there. The rootfs is the first
+ * fd every supervisor init reserves, so siblings hold it at the same
+ * number; a mismatch only costs the rewrite. Needs ptrace-read access
+ * to `tid`, which same-uid guests have. A false match is harmless: the
+ * caller rewrites into OUR view, never the other process's. */
+static int shares_my_root(long tid)
+{
+	if (tid <= 0 || tawcroot_rootfs_fd < 0) return 0;
+	struct stat mine, theirs;
+	if (TAWC_RAW(TAWC_SYS_fstat, tawcroot_rootfs_fd, (long)&mine,
+		     0, 0, 0, 0) < 0)
+		return 0;
+	char path[64];
+	size_t pos = 0;
+	if (tawc_str_append(path, sizeof path, &pos, "/proc/") ||
+	    tawc_str_append_dec(path, sizeof path, &pos, tid) ||
+	    tawc_str_append(path, sizeof path, &pos, "/fd/") ||
+	    tawc_str_append_dec(path, sizeof path, &pos, tawcroot_rootfs_fd))
+		return 0;
+	if (TAWC_RAW(TAWC_SYS_fstatat, AT_FDCWD, (long)path, (long)&theirs,
+		     0, 0, 0) < 0)
+		return 0;
+	return mine.st_dev == theirs.st_dev && mine.st_ino == theirs.st_ino;
+}
+
 /* Byte length of the dir/entry MAGIC LINK prefix in a /proc-relative
  * suffix (no leading "/proc/") — the shapes where a syscall acts on the
  * host inode the link names (or resolves through) rather than on a
@@ -209,8 +235,9 @@ static size_t magic_link_prefix(const char *suf, int *kind)
 	} else if (tail[0] == 'r' && tail[1] == 'o' && tail[2] == 'o' &&
 		   tail[3] == 't' && (tail[4] == 0 || tail[4] == '/')) {
 		if (kind)
-			*kind = resolve_mine(tid) ? TAWCROOT_PROC_MAGIC_ROOT_OWN
-						  : TAWCROOT_PROC_MAGIC_CONTAIN;
+			*kind = resolve_mine(tid) || shares_my_root(tid)
+					? TAWCROOT_PROC_MAGIC_ROOT_OWN
+					: TAWCROOT_PROC_MAGIC_CONTAIN;
 		return (size_t)(tail + 4 - suf);
 	} else {
 		return 0;

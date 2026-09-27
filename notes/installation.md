@@ -344,6 +344,9 @@ replaces them and rejoins at stage 5.
      `50_mesa.json`.
      [AndoInstallProvider] ships the ando client at
      `/usr/local/bin/ando` (notes/ando.md).
+     [AudioInstallProvider] ships `/usr/lib/tawc/audio-session` and the
+     PipeWire sink drop-in `/usr/share/pipewire/pipewire.conf.d/50-tawc-output.conf`
+     (plans/audio.md).
      [ShellDefaultsInstallProvider] ships `/usr/lib/tawc/bashrc`
      (colored short PS1, `ls`/`grep` color aliases) — sourced by the
      one-time `/root/.bashrc` stub that `ShellDefaults.configureScript`
@@ -566,7 +569,8 @@ App-shipped files inside the rootfs split two ways:
 - **Everything else** — copied under every method. The glvnd vendor
   JSON (`/usr/share/glvnd/egl_vendor.d/00_libhybris.json`), the
   `/usr/lib/hybris-vulkan-only/libvulkan.so.1` symlink, the ando
-  client, `/usr/lib/tawc/bashrc`.
+  client, `/usr/lib/tawc/bashrc`, the audio session script and
+  PipeWire drop-in.
 - **Android's bionic linker config** — not app-shipped at all, and
   copied from the host per *spawn* rather than per install. See "The
   bionic linker config" below.
