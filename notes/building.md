@@ -50,7 +50,7 @@ and launch as documented in AGENTS.md's Common Commands.
 | `ltdl.m4` autoconf macros (libffi's `LT_SYS_SYMBOL_USCORE`, in the Xwayland dep chain) | in `libtool` | `libltdl-dev`                                        |
 | Vulkan headers (libhybris cross-build) | `vulkan-headers`        | `libvulkan-dev`                                      |
 | X11/xcb headers (libhybris's X11 EGL platform, `eglplatform_x11.so`) | `libx11 libxcb`   | `libx11-dev libx11-xcb-dev libxcb1-dev`              |
-| `patchelf` (libhybris GL shims) | `patchelf`                  | `patchelf`                                           |
+| `patchelf` (libhybris GL shims, Wayland plugin DT_NEEDED) | `patchelf`                  | `patchelf`                                           |
 | `file` (libhybris build verify step) | `file`                 | `file`                                               |
 | nginx (dev-time mirror cache, optional) | `nginx`                       | `nginx`                                              |
 | podman (release builds + the F-Droid rig, rootless) | `podman`      | `podman`                                             |
