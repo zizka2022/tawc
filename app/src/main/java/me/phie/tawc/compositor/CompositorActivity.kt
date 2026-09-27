@@ -244,6 +244,7 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
         if (!initialized) return
         if (hasFocus) {
             surfaceView.requestFocus()
+            inputDebug = Log.isLoggable(INPUT_TAG, Log.DEBUG)
             DexMetaKey.capture(this)
             applyCompositorFullscreen(compositorFullscreen)
             // Copies made in other apps don't fire the clip-changed
@@ -402,6 +403,7 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
     private var mouseBackDownAt = -1L
 
     private fun onAndroidBack() {
+        if (inputDebug) Log.d(INPUT_TAG, "back invoked, mouseBackDownAt=$mouseBackDownAt")
         val down = mouseBackDownAt
         mouseBackDownAt = -1L
         if (down >= 0 && SystemClock.uptimeMillis() - down < MOUSE_BACK_WINDOW_MS) return
@@ -431,6 +433,7 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
      */
     private inner class TawcSurfaceView(context: Context) : SurfaceView(context) {
         override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+            logInput("keyDown", event)
             if (event.repeatCount == 0 && isPasteShaped(event)) {
                 ClipboardBridge.syncOnInput()
             }
@@ -444,6 +447,7 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
         }
 
         override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+            logInput("keyUp", event)
             if (swallowMouseButtonKey(event)) {
                 return true
             }
@@ -478,6 +482,7 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
         /** Lock keys go to the compositor before the IME: Samsung Keyboard
          *  consumes a hardware Caps Lock, so it never reaches onKeyDown. */
         override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
+            logInput("keyPreIme", event)
             if (keyCode == KeyEvent.KEYCODE_CAPS_LOCK &&
                 !event.isFromSource(InputDevice.SOURCE_MOUSE) &&
                 dispatchHardwareKeyToCompositor(event)
@@ -490,6 +495,7 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
         /** Wheel (`ACTION_SCROLL`) and mouse button press/release actions
          *  arrive here rather than through the touch listener. */
         override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+            logInput("generic", event)
             if (event.actionMasked == MotionEvent.ACTION_BUTTON_PRESS) {
                 ClipboardBridge.syncOnInput()
             }
@@ -538,7 +544,18 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
         }
     }
 
+    /** Input trace for debugging, off unless
+     *  `adb shell setprop log.tag.tawc-input DEBUG` (read on focus gain). */
+    private var inputDebug = false
+
+    private fun logInput(where: String, event: android.view.InputEvent) {
+        if (!inputDebug) return
+        if (event is MotionEvent && event.actionMasked == MotionEvent.ACTION_HOVER_MOVE) return
+        Log.d(INPUT_TAG, "$where $event")
+    }
+
     private fun dispatchTouchToCompositor(event: MotionEvent): Boolean {
+        logInput("touch", event)
         // Middle-click paste and paste menus start with a press.
         if (event.actionMasked == MotionEvent.ACTION_DOWN) ClipboardBridge.syncOnInput()
         // Source split. A mouse click reaches the touch listener as
@@ -973,6 +990,7 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
         private const val SCROLL_STOP_DELAY_MS = 120L
         /** Longest mouse Back hold whose OnBackInvoked we still drop. */
         private const val MOUSE_BACK_WINDOW_MS = 3000L
+        private const val INPUT_TAG = "tawc-input"
 
         private fun decodeTaskIcon(path: String, targetPx: Int): Bitmap? {
             val f = File(path)

@@ -186,6 +186,15 @@ Bluetooth mouse — the emulator has no mouse `InputDevice` at all, so it cannot
 answer it. (Our own test client, `wayland-debug-app`, treats capability
 removal as fatal.)
 
+## Input Debug Log
+
+`adb shell setprop log.tag.tawc-input DEBUG`, then refocus the window:
+`CompositorActivity` logs every key and non-hover motion event it receives
+(pre-IME, key down/up, generic motion, touch listener) plus Back invocations,
+under tag `tawc-input`. Off by default; `setprop log.tag.tawc-input INFO` to
+stop. Useful because Android 16 retail builds show no event details in
+`dumpsys input` and refuse Perfetto input tracing.
+
 ## Simulating Touch via adb
 
 `adb shell input tap X Y` injects touch events through the Android input framework.
