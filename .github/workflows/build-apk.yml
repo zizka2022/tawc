@@ -16,6 +16,9 @@ jobs:
       # The runner's own preinstalled SDKs are unused here; mounted only so they can be deleted
       # to free disk for the NDK, Rust targets and the Xwayland/libhybris cross-builds.
       options: -v /usr/share/dotnet:/host/dotnet -v /usr/local/lib/android:/host/android -v /opt/hostedtoolcache:/host/toolcache
+    defaults:
+      run:
+        shell: bash
     env:
       ANDROID_HOME: /opt/android-sdk
       ANDROID_SDK_ROOT: /opt/android-sdk
@@ -51,8 +54,9 @@ jobs:
       - name: Mark checkout safe for git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Cache cargo, gradle and vendored deps
-        uses: actions/cache@v4
+      - name: Restore cargo, gradle and vendored deps
+        id: cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -103,6 +107,21 @@ jobs:
             -PtawcAbis=arm64-v8a -PtawcXwayland=true \
             -PtawcGraphics=libhybris,cpu -PtawcMethods=tawcroot \
             -PtawcBootstrapPackages=false
+
+      # Saved right after a good build, so a later step failing doesn't lose it.
+      - name: Save cargo, gradle and vendored deps
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+            ~/.rustup
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            deps
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Checksum
         run: |
