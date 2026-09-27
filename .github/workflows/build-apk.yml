@@ -1,0 +1,120 @@
+# Debug APK for on-device testing (arm64, tawcroot, libhybris + cpu graphics).
+# Mirrors the F-Droid recipe (fdroid/me.phie.tawc.yml): Debian trixie, same host
+# packages, NDK and Rust pins. Builds the debug variant so the exec broker is included.
+name: build-apk
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  debug-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    container:
+      image: debian:trixie
+      # The runner's own preinstalled SDKs are unused here; mounted only so they can be deleted
+      # to free disk for the NDK, Rust targets and the Xwayland/libhybris cross-builds.
+      options: -v /usr/share/dotnet:/host/dotnet -v /usr/local/lib/android:/host/android -v /opt/hostedtoolcache:/host/toolcache
+    env:
+      ANDROID_HOME: /opt/android-sdk
+      ANDROID_SDK_ROOT: /opt/android-sdk
+      NDK_VERSION: 27.2.12479018
+      CMDLINE_TOOLS_ZIP: commandlinetools-linux-13114758_latest.zip
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Free runner disk
+        run: |
+          rm -rf /host/dotnet/* /host/android/* /host/toolcache/* || true
+          df -h /
+
+      - name: Host packages
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git ca-certificates unzip openjdk-21-jdk-headless \
+            rustup \
+            build-essential make pkg-config curl libarchive-tools file \
+            meson ninja-build bison \
+            autoconf automake libtool libtool-bin libltdl-dev \
+            perl python3 python3-libxml2 xsltproc libexpat1-dev \
+            libwayland-dev libwayland-bin libwayland-egl-backend-dev \
+            wayland-protocols \
+            libvulkan-dev patchelf \
+            libx11-dev libx11-xcb-dev libxcb1-dev \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu libc6-arm64-cross \
+            linux-libc-dev-arm64-cross
+
+      - uses: actions/checkout@v4
+
+      - name: Mark checkout safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache cargo, gradle and vendored deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+            ~/.rustup
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            deps
+          key: tawc-${{ hashFiles('rust-toolchain.toml', 'deps/deps.list', '**/Cargo.lock', 'gradle/wrapper/gradle-wrapper.properties', '**/*.gradle.kts') }}
+          restore-keys: tawc-
+
+      - name: Android SDK + NDK
+        run: |
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          curl -fsSL -o /tmp/clt.zip "https://dl.google.com/android/repository/$CMDLINE_TOOLS_ZIP"
+          unzip -q /tmp/clt.zip -d "$ANDROID_HOME/cmdline-tools"
+          mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "platforms;android-36" "build-tools;36.0.0" "ndk;$NDK_VERSION" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Rust toolchain + cargo-ndk
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup show active-toolchain || rustup toolchain install
+          command -v cargo-ndk || cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Debug signing key
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          # A fixed key lets successive builds install over each other without
+          # uninstalling (which would delete the installed distros).
+          mkdir -p ~/.android
+          if [ -n "$DEBUG_KEYSTORE_B64" ]; then
+            echo "$DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          else
+            echo "::warning::DEBUG_KEYSTORE_B64 not set; using a throwaway debug key"
+          fi
+
+      - name: Build debug APK
+        run: |
+          export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+          ./gradlew --no-daemon --stacktrace assembleDebug \
+            -PtawcAbis=arm64-v8a -PtawcXwayland=true \
+            -PtawcGraphics=libhybris,cpu -PtawcMethods=tawcroot \
+            -PtawcBootstrapPackages=false
+
+      - name: Checksum
+        run: |
+          cd app/build/outputs/apk/debug
+          mv app-debug.apk "tawc-debug-${GITHUB_SHA::7}.apk"
+          sha256sum *.apk | tee SHA256SUMS
+          df -h /
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tawc-debug-${{ github.sha }}
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/debug/SHA256SUMS
+          retention-days: 30
