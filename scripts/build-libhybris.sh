@@ -407,9 +407,9 @@ patchelf --set-soname libGLESv2_hybris.so "$SHIM_DIR/libGLESv2_hybris.so"
 ln -sf libGLESv2.so.2 "$SHIM_DIR/libGLESv2.so"
 
 # libGL.so.1 is a symlink to the GLESv2 shim (forwards GLES, exposes
-# NULL-GLX). libGL.so is a separately-built shim that DT_NEEDEDs
-# libGL.so.1 — soname libGL.so.1 ensures `-lGL` consumers record
-# libGL.so.1 as DT_NEEDED.
+# NULL-GLX). libGL.so is a separately-built shim linked against it; the
+# recorded DT_NEEDED is the target's soname, libGLESv2.so.2. Its own
+# soname libGL.so.1 ensures `-lGL` consumers record libGL.so.1.
 ln -sf libGLESv2.so.2 "$SHIM_DIR/libGL.so.1"
 "$CC_BIN" -shared -fPIC \
     -o "$SHIM_DIR/libGL.so" \
@@ -443,7 +443,7 @@ check_needed() {
     fi
 }
 check_needed "$SHIM_DIR/libGLESv2.so.2" libGLESv2_hybris.so
-check_needed "$SHIM_DIR/libGL.so" libGL.so.1
+check_needed "$SHIM_DIR/libGL.so" libGLESv2.so.2
 
 for shim in "$SHIM_DIR/libGLESv2.so.2" "$SHIM_DIR/libGL.so"; do
     check_glx_export "$shim" glXGetCurrentContext
