@@ -1,7 +1,10 @@
 # Audio Bridge Plan
 
-This is the planned direction for Linux app audio in tawc. No production
-audio bridge exists yet.
+This is the planned direction for Linux app audio in tawc. Status: the
+Android half of playback exists — `compositor/AudioBridge.kt` creates the
+`audio-out-0` FIFO in the shared dir and plays s16le/stereo/48 kHz through an
+AudioTrack (paused while the writer is quiet). Nothing in the app starts a
+rootfs audio server yet; see "First Milestones".
 
 ## Goal
 
