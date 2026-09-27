@@ -212,7 +212,7 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
     @Deprecated("Deprecated in Android; kept for pre-OnBackInvoked dispatch.")
     override fun onBackPressed() {
         if (initialized) {
-            NativeBridge.nativeOnBackPressed(activityId)
+            onAndroidBack()
         } else {
             super.onBackPressed()
         }
@@ -244,6 +244,7 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
         if (!initialized) return
         if (hasFocus) {
             surfaceView.requestFocus()
+            DexMetaKey.capture(this)
             applyCompositorFullscreen(compositorFullscreen)
             // Copies made in other apps don't fire the clip-changed
             // listener while we're backgrounded (Android 10+); catch up.
@@ -394,9 +395,22 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
         unregisterBackCallbackApi33()
     }
 
+    /** Uptime of a mouse side-button `KEYCODE_BACK` down the view
+     *  swallowed, or -1. On API 33+ the matching up never reaches the
+     *  view: ViewRootImpl hands it to the OnBackInvoked callback, so the
+     *  callback must drop it itself. */
+    private var mouseBackDownAt = -1L
+
+    private fun onAndroidBack() {
+        val down = mouseBackDownAt
+        mouseBackDownAt = -1L
+        if (down >= 0 && SystemClock.uptimeMillis() - down < MOUSE_BACK_WINDOW_MS) return
+        NativeBridge.nativeOnBackPressed(activityId)
+    }
+
     private fun registerBackCallbackApi33() {
         val callback = OnBackInvokedCallback {
-            if (initialized) NativeBridge.nativeOnBackPressed(activityId)
+            if (initialized) onAndroidBack()
         }
         backCallback = callback
         onBackInvokedDispatcher.registerOnBackInvokedCallback(
@@ -451,10 +465,27 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
          *  `BTN_EXTRA`, so consume the key here — otherwise a mouse Back
          *  click would also run the Android Back policy (dismiss popup /
          *  leave fullscreen / send Escape). */
-        private fun swallowMouseButtonKey(event: KeyEvent): Boolean =
-            event.isFromSource(InputDevice.SOURCE_MOUSE) &&
-                (event.keyCode == KeyEvent.KEYCODE_BACK ||
-                    event.keyCode == KeyEvent.KEYCODE_FORWARD)
+        private fun swallowMouseButtonKey(event: KeyEvent): Boolean {
+            if (!event.isFromSource(InputDevice.SOURCE_MOUSE)) return false
+            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                mouseBackDownAt =
+                    if (event.action == KeyEvent.ACTION_DOWN) event.downTime else -1L
+                return true
+            }
+            return event.keyCode == KeyEvent.KEYCODE_FORWARD
+        }
+
+        /** Lock keys go to the compositor before the IME: Samsung Keyboard
+         *  consumes a hardware Caps Lock, so it never reaches onKeyDown. */
+        override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
+            if (keyCode == KeyEvent.KEYCODE_CAPS_LOCK &&
+                !event.isFromSource(InputDevice.SOURCE_MOUSE) &&
+                dispatchHardwareKeyToCompositor(event)
+            ) {
+                return true
+            }
+            return super.onKeyPreIme(keyCode, event)
+        }
 
         /** Wheel (`ACTION_SCROLL`) and mouse button press/release actions
          *  arrive here rather than through the touch listener. */
@@ -607,6 +638,10 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
                 syncMouseButtons(event, event.buttonState)
             }
             MotionEvent.ACTION_HOVER_EXIT -> Unit
+            // Side buttons change buttonState with no motion to carry it;
+            // without these their release would wait for the next move.
+            MotionEvent.ACTION_BUTTON_PRESS,
+            MotionEvent.ACTION_BUTTON_RELEASE -> syncMouseButtons(event, event.buttonState)
             MotionEvent.ACTION_CANCEL -> syncMouseButtons(event, 0)
             MotionEvent.ACTION_SCROLL -> {
                 sendPointerMotion(event)
@@ -641,13 +676,19 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun sendPointerScroll(event: MotionEvent) {
-        val vscroll = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
-        val hscroll = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
+        var vscroll = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+        var hscroll = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
         if (vscroll == 0f && hscroll == 0f) return
         // A touchpad scroll is a finger gesture, not wheel detents. GTK only
         // settles its kinetic scrolling on the axis_stop that ends one, and
         // Android has no gesture-end event, so time it out.
         val fromTouchpad = event.device?.supportsSource(InputDevice.SOURCE_TOUCHPAD) == true
+        if (!fromTouchpad) {
+            // Android sends one event per wheel notch but scales it by its
+            // scroll acceleration (up to 4x on DeX). Linux wheels have none.
+            vscroll = vscroll.coerceIn(-1f, 1f)
+            hscroll = hscroll.coerceIn(-1f, 1f)
+        }
         NativeBridge.nativeOnPointerEvent(
             activityId, POINTER_KIND_AXIS, event.x, event.y,
             0, false, vscroll, hscroll, fromTouchpad, false, event.eventTime,
@@ -930,6 +971,8 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
 
         /** Idle gap after which a touchpad scroll gesture is considered over. */
         private const val SCROLL_STOP_DELAY_MS = 120L
+        /** Longest mouse Back hold whose OnBackInvoked we still drop. */
+        private const val MOUSE_BACK_WINDOW_MS = 3000L
 
         private fun decodeTaskIcon(path: String, targetPx: Int): Bitmap? {
             val f = File(path)

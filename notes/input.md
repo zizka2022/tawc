@@ -71,17 +71,24 @@ Android's fall-through to generic motion.
 
 **Buttons.** Android reports a button *bitmask*, not per-button actions, so
 presses and releases come from diffing `MotionEvent.buttonState` against the
-previous value; `ACTION_BUTTON_PRESS`/`RELEASE` are ignored because the diff
-already covers them. `BUTTON_PRIMARY`/`SECONDARY`/`TERTIARY`/`BACK`/`FORWARD`
+previous value, on every mouse event including `ACTION_BUTTON_PRESS`/`RELEASE`.
+Those two matter for side buttons: a Back/Forward click makes no `DOWN`/`UP`,
+so without them the release waited for the next pointer motion. `BUTTON_PRIMARY`/`SECONDARY`/`TERTIARY`/`BACK`/`FORWARD`
 map to evdev `BTN_LEFT` 0x110, `BTN_RIGHT` 0x111, `BTN_MIDDLE` 0x112,
 `BTN_SIDE` 0x113, `BTN_EXTRA` 0x114. A mouse side button also raises
 `KEYCODE_BACK`/`KEYCODE_FORWARD`; `TawcSurfaceView` swallows those so the
-click does not *also* run the Android Back policy below.
+click does not *also* run the Android Back policy below. On API 33+ only the
+Back *down* reaches the view — ViewRootImpl hands the up straight to the
+`OnBackInvokedCallback` — so the swallowed down is remembered and the next
+Back invocation within 3 s is dropped (`onAndroidBack`).
 
 **Scroll units and direction.** Android `AXIS_VSCROLL` is positive scrolling
 away from the user, Wayland's vertical axis is positive downward, so vertical
 is negated; `AXIS_HSCROLL` is already positive-right and is not. One detent is
-`AXIS_VSCROLL == 1.0` -> `axis_value120` 120, and 15 logical pixels in the
+`AXIS_VSCROLL == 1.0` -> `axis_value120` 120. Android sends one event per
+wheel notch but multiplies fast scrolls by its scroll acceleration (up to 4.0
+per event on Samsung DeX), so wheel values are clamped to ±1 per event;
+touchpad values pass through. A detent is also 15 logical pixels in the
 legacy `axis` value (libinput's wheel-click angle, which is what desktop
 clients are tuned against — deliberately *not*
 `ViewConfiguration.getScaledVerticalScrollFactor()`, which is density-scaled
@@ -240,7 +247,13 @@ new Wayland presses while the key is already held; Wayland clients repeat from
 `wl_keyboard.repeat_info` until the release arrives. Backspace/Delete/Enter/Tab/
 Escape, arrows, modifiers, letters, digits, punctuation, function keys, and
 numpad keys share the same Android-to-evdev table used by IME-originated key
-events. Unmapped Android/system keys return `false` from JNI so Android can
+events.
+
+Two keys need help reaching the view. Caps Lock is consumed by Samsung
+Keyboard (the IME sees hardware keys before `onKeyDown`), so `onKeyPreIme`
+forwards it. Samsung DeX keeps Meta for its own shortcuts unless the app calls
+the hidden `SemWindowManager.requestMetaKeyEvent` (`DexMetaKey`, on every
+window focus gain); with it, Meta arrives as `KEYCODE_META_*` like any key. Unmapped Android/system keys return `false` from JNI so Android can
 keep its normal handling.
 
 Known gap: emulator host Backspace can arrive as an app-visible down event
