@@ -50,3 +50,11 @@ impl OutputScale {
         Self::new(((scaled * 120.0).round() / 120.0).max(1.0 / 120.0))
     }
 }
+
+fn logical_extent(physical: i32, scale: f64) -> i32 {
+    if physical <= 0 {
+        0
+    } else {
+        ((physical as f64 / scale).round() as i32).max(1)
+    }
+}
