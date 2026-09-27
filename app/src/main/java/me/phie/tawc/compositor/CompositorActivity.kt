@@ -417,6 +417,9 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
      */
     private inner class TawcSurfaceView(context: Context) : SurfaceView(context) {
         override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+            if (event.repeatCount == 0 && isPasteShaped(event)) {
+                ClipboardBridge.syncOnInput()
+            }
             if (swallowMouseButtonKey(event)) {
                 return true
             }
@@ -436,6 +439,13 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
             return super.onKeyUp(keyCode, event)
         }
 
+        /** Keys that can start a paste (Ctrl/Shift+V, Shift+Insert, a Paste
+         *  key): sync the clipboard before the client acts on them. */
+        private fun isPasteShaped(event: KeyEvent): Boolean =
+            event.isCtrlPressed || event.isShiftPressed || event.isMetaPressed ||
+                event.keyCode == KeyEvent.KEYCODE_INSERT ||
+                event.keyCode == KeyEvent.KEYCODE_PASTE
+
         /** Android raises `KEYCODE_BACK`/`KEYCODE_FORWARD` alongside the
          *  mouse side buttons. Those already went out as `BTN_SIDE`/
          *  `BTN_EXTRA`, so consume the key here — otherwise a mouse Back
@@ -449,6 +459,9 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
         /** Wheel (`ACTION_SCROLL`) and mouse button press/release actions
          *  arrive here rather than through the touch listener. */
         override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+            if (event.actionMasked == MotionEvent.ACTION_BUTTON_PRESS) {
+                ClipboardBridge.syncOnInput()
+            }
             if (event.isFromSource(InputDevice.SOURCE_MOUSE) &&
                 dispatchPointerToCompositor(event)
             ) {
@@ -495,6 +508,8 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun dispatchTouchToCompositor(event: MotionEvent): Boolean {
+        // Middle-click paste and paste menus start with a press.
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) ClipboardBridge.syncOnInput()
         // Source split. A mouse click reaches the touch listener as
         // ACTION_DOWN/MOVE/UP, so without this a single click would deliver
         // both a wl_touch.down and a wl_pointer.button and clients would

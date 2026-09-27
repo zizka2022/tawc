@@ -54,6 +54,11 @@ object ClipboardBridge {
 
     private var focusSyncAttemptsLeft = 0
 
+    /** Timestamp of the last clip announced to native; lets [syncOnInput]
+     *  announce each new clip once. */
+    @Volatile
+    private var lastAnnouncedTs = 0L
+
     private val listener = ClipboardManager.OnPrimaryClipChangedListener {
         announceClip()
     }
@@ -80,6 +85,7 @@ object ClipboardBridge {
         clipboard = null
         pasteCache = null
         focusSyncAttemptsLeft = 0
+        lastAnnouncedTs = 0L
     }
 
     fun setTextFromCompositor(text: String) {
@@ -129,6 +135,20 @@ object ClipboardBridge {
         focusSyncRunnable.run()
     }
 
+    /** Catch a clip no focus sync announced before a possible paste. On
+     *  DeX the focus-gain description read can stay denied past the retries
+     *  (focus is per display), leaving a client serving its own stale
+     *  selection. Called on paste-shaped input; reads only the toast-free
+     *  description and announces only a clip it hasn't seen. Clips without a
+     *  timestamp are left to the focus sync: re-announcing those on every
+     *  keypress would keep clobbering live client selections. */
+    fun syncOnInput() {
+        val desc = clipboard?.primaryClipDescription ?: return
+        val ts = desc.timestamp
+        if (ts == 0L || ts == lastAnnouncedTs) return
+        announce(desc)
+    }
+
     /** The real clipboard read backing a paste in progress. Called via
      *  reverse JNI from a native clipboard-fetch thread; ClipboardManager
      *  is a binder proxy, safe to use off the main thread. */
@@ -158,12 +178,17 @@ object ClipboardBridge {
      *  caught — acceptable, rare. */
     private fun announceClip(): Boolean {
         val desc = clipboard?.primaryClipDescription ?: return false
+        announce(desc)
+        return true
+    }
+
+    private fun announce(desc: ClipDescription) {
+        lastAnnouncedTs = desc.timestamp
         if (!desc.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN) &&
             !desc.hasMimeType(ClipDescription.MIMETYPE_TEXT_HTML)
-        ) return true
+        ) return
         val ownWrite = desc.label?.toString() == OWN_CLIP_LABEL
         NativeBridge.nativeOnAndroidClipAvailable(desc.timestamp, ownWrite)
-        return true
     }
 
     /** No ClipDescription MIME gate: Firefox/Gecko copies of web content are
