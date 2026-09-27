@@ -65,6 +65,16 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
      *  reports a bitmask rather than per-button actions, so press/release
      *  events come from diffing this. */
     private var mouseButtonState = 0
+    /** buttonState of the last mouse MotionEvent. */
+    private var motionButtons = 0
+    /** Side buttons held according to their `KEYCODE_BACK`/`FORWARD`. On
+     *  Samsung DeX (Android 16) that key is the only trace of a side
+     *  click — the MotionEvents carry no BUTTON_BACK/FORWARD — while
+     *  injected or other devices' clicks may come as motion alone. The
+     *  emitted state is the union; the key's up ends the button. */
+    private var keySideButtons = 0
+    private var lastPointerX = 0f
+    private var lastPointerY = 0f
 
     /** Ends a touchpad scroll gesture with an `axis_stop` frame. */
     private val scrollStopRunnable = Runnable {
@@ -406,7 +416,11 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
         if (inputDebug) Log.d(INPUT_TAG, "back invoked, mouseBackDownAt=$mouseBackDownAt")
         val down = mouseBackDownAt
         mouseBackDownAt = -1L
-        if (down >= 0 && SystemClock.uptimeMillis() - down < MOUSE_BACK_WINDOW_MS) return
+        if (down >= 0 && SystemClock.uptimeMillis() - down < MOUSE_BACK_WINDOW_MS) {
+            // This is the side click's key up; the view may never see it.
+            onSideButtonKey(MotionEvent.BUTTON_BACK, false, SystemClock.uptimeMillis())
+            return
+        }
         NativeBridge.nativeOnBackPressed(activityId)
     }
 
@@ -471,12 +485,17 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
          *  leave fullscreen / send Escape). */
         private fun swallowMouseButtonKey(event: KeyEvent): Boolean {
             if (!event.isFromSource(InputDevice.SOURCE_MOUSE)) return false
-            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
-                mouseBackDownAt =
-                    if (event.action == KeyEvent.ACTION_DOWN) event.downTime else -1L
-                return true
+            val bit = when (event.keyCode) {
+                KeyEvent.KEYCODE_BACK -> MotionEvent.BUTTON_BACK
+                KeyEvent.KEYCODE_FORWARD -> MotionEvent.BUTTON_FORWARD
+                else -> return false
             }
-            return event.keyCode == KeyEvent.KEYCODE_FORWARD
+            val down = event.action == KeyEvent.ACTION_DOWN
+            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                mouseBackDownAt = if (down) event.downTime else -1L
+            }
+            if (event.repeatCount == 0) onSideButtonKey(bit, down, event.eventTime)
+            return true
         }
 
         /** Lock keys go to the compositor before the IME: Samsung Keyboard
@@ -670,15 +689,32 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun sendPointerMotion(event: MotionEvent) {
+        lastPointerX = event.x
+        lastPointerY = event.y
         NativeBridge.nativeOnPointerEvent(
             activityId, POINTER_KIND_MOTION, event.x, event.y,
             0, false, 0f, 0f, false, false, event.eventTime,
         )
     }
 
-    /** Emit one button event per bit that changed since the last event. */
     private fun syncMouseButtons(event: MotionEvent, rawMask: Int) {
-        val mask = rawMask and MOUSE_BUTTON_MASK
+        motionButtons = rawMask
+        emitMouseButtons(event.x, event.y, event.eventTime)
+    }
+
+    private fun onSideButtonKey(bit: Int, pressed: Boolean, eventTime: Long) {
+        if (pressed) {
+            keySideButtons = keySideButtons or bit
+        } else {
+            keySideButtons = keySideButtons and bit.inv()
+            motionButtons = motionButtons and bit.inv()
+        }
+        emitMouseButtons(lastPointerX, lastPointerY, eventTime)
+    }
+
+    /** Emit one button event per bit that changed since the last event. */
+    private fun emitMouseButtons(x: Float, y: Float, eventTime: Long) {
+        val mask = (motionButtons or keySideButtons) and MOUSE_BUTTON_MASK
         var changed = mask xor mouseButtonState
         if (changed == 0) return
         mouseButtonState = mask
@@ -686,8 +722,8 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
             val bit = changed and -changed
             changed = changed and bit.inv()
             NativeBridge.nativeOnPointerEvent(
-                activityId, POINTER_KIND_BUTTON, event.x, event.y,
-                bit, (mask and bit) != 0, 0f, 0f, false, false, event.eventTime,
+                activityId, POINTER_KIND_BUTTON, x, y,
+                bit, (mask and bit) != 0, 0f, 0f, false, false, eventTime,
             )
         }
     }

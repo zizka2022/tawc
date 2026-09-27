@@ -76,8 +76,12 @@ Those two matter for side buttons: a Back/Forward click makes no `DOWN`/`UP`,
 so without them the release waited for the next pointer motion. `BUTTON_PRIMARY`/`SECONDARY`/`TERTIARY`/`BACK`/`FORWARD`
 map to evdev `BTN_LEFT` 0x110, `BTN_RIGHT` 0x111, `BTN_MIDDLE` 0x112,
 `BTN_SIDE` 0x113, `BTN_EXTRA` 0x114. A mouse side button also raises
-`KEYCODE_BACK`/`KEYCODE_FORWARD`; `TawcSurfaceView` swallows those so the
-click does not *also* run the Android Back policy below. On API 33+ only the
+`KEYCODE_BACK`/`KEYCODE_FORWARD` (source mouse); `TawcSurfaceView` swallows
+those so the click does not *also* run the Android Back policy below, and
+turns them into the side button: on Samsung DeX (Android 16) the key is the
+only trace of a side click, the MotionEvents carry no BACK/FORWARD bits. The
+emitted state is the union of motion bits and key-held bits, and the key's up
+releases the button, so a device that reports both still clicks once. On API 33+ only the
 Back *down* reaches the view — ViewRootImpl hands the up straight to the
 `OnBackInvokedCallback` — so the swallowed down is remembered and the next
 Back invocation within 3 s is dropped (`onAndroidBack`).
