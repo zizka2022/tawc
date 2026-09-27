@@ -399,9 +399,9 @@ patchelf --set-soname libGLESv2_hybris.so "$SHIM_DIR/libGLESv2_hybris.so"
     -o "$SHIM_DIR/libGLESv2.so.2" \
     "$REPO_DIR/deps/libhybris-shims/libglesv2-shim.c" \
     "$REPO_DIR/deps/libhybris-shims/glx-stubs.c" \
+    -Wl,--no-as-needed \
     -L"$SHIM_DIR" -l:libGLESv2_hybris.so \
     -Wl,-rpath,/usr/lib/hybris/gl-shims \
-    -Wl,--no-as-needed \
     -Wl,--version-script="$REPO_DIR/deps/libhybris-shims/glx-stubs.map" \
     -Wl,-soname,libGLESv2.so.2
 ln -sf libGLESv2.so.2 "$SHIM_DIR/libGLESv2.so"
@@ -415,9 +415,9 @@ ln -sf libGLESv2.so.2 "$SHIM_DIR/libGL.so.1"
     -o "$SHIM_DIR/libGL.so" \
     "$REPO_DIR/deps/libhybris-shims/libgl-shim.c" \
     "$REPO_DIR/deps/libhybris-shims/glx-stubs.c" \
+    -Wl,--no-as-needed \
     -L"$SHIM_DIR" -l:libGL.so.1 \
     -Wl,-rpath,/usr/lib/hybris/gl-shims \
-    -Wl,--no-as-needed \
     -Wl,--version-script="$REPO_DIR/deps/libhybris-shims/glx-stubs.map" \
     -Wl,-soname,libGL.so.1
 
@@ -432,6 +432,18 @@ check_glx_export() {
         exit 1
     fi
 }
+
+# The shims forward GLES only through DT_NEEDED; without it, programs linking
+# libGLESv2 directly fail with e.g. "undefined symbol: glAttachShader".
+# (--no-as-needed has to come before the -l it applies to.)
+check_needed() {
+    if ! "${HOST_TRIPLE}-readelf" -d "$1" | grep -q "NEEDED.*\[$2\]"; then
+        echo "ERROR: $1 does not DT_NEEDED $2" >&2
+        exit 1
+    fi
+}
+check_needed "$SHIM_DIR/libGLESv2.so.2" libGLESv2_hybris.so
+check_needed "$SHIM_DIR/libGL.so" libGL.so.1
 
 for shim in "$SHIM_DIR/libGLESv2.so.2" "$SHIM_DIR/libGL.so"; do
     check_glx_export "$shim" glXGetCurrentContext
