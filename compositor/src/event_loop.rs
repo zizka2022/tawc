@@ -53,6 +53,14 @@ struct TouchResolution {
     keyboard_focus: KeyboardFocusAction,
 }
 
+/// The scale Android pixels from `activity_id` convert at (its display's
+/// density-adjusted scale), falling back to the global output scale.
+fn host_scale(data: &TawcState, activity_id: &ActivityId) -> OutputScale {
+    data.hosts
+        .get(activity_id)
+        .map_or(data.output_scale, |host| host.scale)
+}
+
 /// Hit-test a visible host's window stack at a compositor-space logical
 /// point. Shared by touch and pointer: both honour the visible-host guard
 /// and `WindowSurfaceType::ALL`, which respects `wl_surface.set_input_region`
@@ -436,7 +444,7 @@ pub fn run(
             | TouchEvent::Up { activity_id, .. } => activity_id.clone(),
         };
 
-        let touch_scale = data.output_scale;
+        let touch_scale = host_scale(data, &activity_id);
         let serial = SERIAL_COUNTER.next_serial();
 
         match evt {
@@ -534,7 +542,7 @@ pub fn run(
             return;
         }
 
-        let scale = data.output_scale;
+        let scale = host_scale(data, &activity_id);
         let serial = SERIAL_COUNTER.next_serial();
 
         match evt {
@@ -763,8 +771,15 @@ pub fn run(
                 .map(|pid| pid.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
+            // Per-host effective scale and logical size, e.g. `2.00:540x1055,1.00:1280x720`.
+            let host_scales = data
+                .hosts
+                .values()
+                .map(|h| format!("{:.2}:{}x{}", h.scale.fractional(), h.logical_size.0, h.logical_size.1))
+                .collect::<Vec<_>>()
+                .join(",");
             let payload = format!(
-                "clients={} toplevels={} surfaces_wlegl={} surfaces_shm={} frames={} rendered_toplevels={} hosts={} bound_hosts={} xwayland_running={} xwayland_pids={} x11_surfaces={} x11_surfaces_with_host={} wlegl_create_buffer_total={} wlegl_import_texture_total={} wlegl_buffer_destroy_total={} last_wlegl_width={} last_wlegl_height={} last_wlegl_format={} output_scale={:.2} output_physical_w={} output_physical_h={} output_logical_w={} output_logical_h={} pointer_present={} pointer_x={:.2} pointer_y={:.2} pointer_focus={} cursor_shape={}",
+                "clients={} toplevels={} surfaces_wlegl={} surfaces_shm={} frames={} rendered_toplevels={} hosts={} bound_hosts={} xwayland_running={} xwayland_pids={} x11_surfaces={} x11_surfaces_with_host={} wlegl_create_buffer_total={} wlegl_import_texture_total={} wlegl_buffer_destroy_total={} last_wlegl_width={} last_wlegl_height={} last_wlegl_format={} output_scale={:.2} output_physical_w={} output_physical_h={} output_logical_w={} output_logical_h={} pointer_present={} pointer_x={:.2} pointer_y={:.2} pointer_focus={} cursor_shape={} host_scales={}",
                 clients,
                 toplevel_count(data),
                 surfaces_wlegl,
@@ -797,6 +812,7 @@ pub fn run(
                     "no"
                 },
                 crate::cursor::debug_shape(data),
+                host_scales,
             );
             let _ = response.send(payload);
         }
@@ -1089,6 +1105,11 @@ fn handle_surface_event(
                     data.hosts.insert(activity_id.clone(), host);
                 }
             }
+            // The Activity reports its display density before its surface.
+            let ratio = data.host_density_ratio.get(&activity_id).copied().unwrap_or(1.0);
+            if let Some(host) = data.hosts.get_mut(&activity_id) {
+                host.set_density_ratio(ratio, scale);
+            }
             // Bind the EGLSurface (separate step: needs &RenderState).
             if let Some(host) = data.hosts.get_mut(&activity_id) {
                 if let Some(render) = data.render.get() {
@@ -1160,6 +1181,7 @@ fn handle_surface_event(
                 info!("Host {} removed (closed {} windows)", activity_id, closed);
             }
             data.host_fullscreen.remove(&activity_id);
+            data.host_density_ratio.remove(&activity_id);
             data.window_metadata.remove(&activity_id);
             data.desktop.clear_foreground_host_if(&activity_id);
             if data.advertised_output_host.as_ref() == Some(&activity_id) {
@@ -1190,6 +1212,27 @@ fn handle_surface_event(
         }
         SurfaceEvent::OutputScaleChanged { scale } => {
             apply_output_scale(data, OutputScale::new(scale));
+        }
+        SurfaceEvent::DensityChanged { activity_id, ratio } => {
+            data.host_density_ratio.insert(activity_id.clone(), ratio);
+            let base = data.output_scale;
+            let changed = data
+                .hosts
+                .get_mut(&activity_id)
+                .is_some_and(|host| host.set_density_ratio(ratio, base));
+            if changed {
+                data.sync_advertised_output_to_host_if_visible(&activity_id);
+                data.sync_desktop_hosts();
+                data.send_host_surface_scales(&activity_id);
+                reconfigure_all_toplevels(data);
+                data.needs_render = true;
+                info!(
+                    "Host {} scale {:.3} (density ratio {:.3})",
+                    activity_id,
+                    data.hosts.get(&activity_id).map_or(0.0, |h| h.scale.fractional()),
+                    ratio,
+                );
+            }
         }
         SurfaceEvent::XwaylandChanged { enabled } => {
             crate::xwayland::set_enabled(loop_handle, data, enabled);

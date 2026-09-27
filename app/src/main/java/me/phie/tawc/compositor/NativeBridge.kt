@@ -218,6 +218,11 @@ object NativeBridge {
      *  send `Activated`/`Suspended` configures and pause frame callbacks. */
     external fun nativeOnActivityFocusChanged(activityId: String, hasFocus: Boolean)
 
+    /** This Activity's display density relative to the phone's (1.0 on the
+     *  phone, below 1 on a lower-density DeX monitor). The compositor scales
+     *  that host's windows by it; see OutputScale::for_density_ratio. */
+    external fun nativeOnActivityDensityChanged(activityId: String, ratio: Float)
+
     /** Notify the compositor that Android externally changed an Activity's
      *  fullscreen state. Most fullscreen transitions originate in native
      *  xdg-shell handling and come back through [setActivityFullscreen]. */

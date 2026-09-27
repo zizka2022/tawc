@@ -572,7 +572,7 @@ pub fn render_frame(
         .expect("render_frame called for host without EGLSurface");
 
     let output_size = host.physical_size;
-    let scale = state.output_scale;
+    let scale = host.scale;
     let screen_w = output_size.w;
     let screen_h = output_size.h;
     let region = Rectangle::from_size(Size::from(host.logical_size));

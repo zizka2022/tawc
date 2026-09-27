@@ -191,6 +191,13 @@ impl DesktopRegistry {
         self.windows.values()
     }
 
+    pub fn windows_for_host<'a>(&'a self, host_id: &'a ActivityId) -> impl Iterator<Item = &'a Window> + 'a {
+        self.windows
+            .iter()
+            .filter(move |(root, _)| self.surface_to_host.get(*root) == Some(host_id))
+            .map(|(_, window)| window)
+    }
+
     pub fn visible_spaces(&self, hosts: &HashMap<ActivityId, OutputHost>) -> Vec<&Space<Window>> {
         self.visible_host_ids(hosts)
             .iter()

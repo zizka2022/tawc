@@ -197,6 +197,10 @@ pub struct TawcState {
     /// the Activity registers its SurfaceView.
     pub host_fullscreen: HashMap<ActivityId, bool>,
 
+    /// Last density ratio each Activity reported (`DensityChanged`). Kept
+    /// here too because it can arrive before the host registers.
+    pub host_density_ratio: HashMap<ActivityId, f64>,
+
     /// Last Android-facing metadata sent for each Activity. Used for
     /// recents labels/icons and as the seed for a future in-app switcher.
     pub window_metadata: HashMap<ActivityId, WindowMetadata>,
@@ -405,6 +409,7 @@ impl TawcState {
             buffer_commit_pending: false,
             hosts: HashMap::new(),
             host_fullscreen: HashMap::new(),
+            host_density_ratio: HashMap::new(),
             window_metadata: HashMap::new(),
             app_metadata_cache: HashMap::new(),
             // Phase 5: default to multi-window. Each non-child toplevel
@@ -476,19 +481,25 @@ impl TawcState {
     /// derives the logical size from the current scale, and pushes both to
     /// the `wl_output`.
     pub fn set_output_mode(&mut self, physical_px: (i32, i32)) {
+        self.set_output_mode_scaled(physical_px, self.output_scale);
+    }
+
+    /// `set_output_mode` at a specific scale: the advertised host's own
+    /// (density-adjusted) scale when the output follows a host.
+    pub fn set_output_mode_scaled(&mut self, physical_px: (i32, i32), scale: OutputScale) {
         let (mut w, mut h) = physical_px;
         if w <= 0 || h <= 0 {
             error!("Invalid output size {}x{}, clamping to 1x1", w, h);
             (w, h) = (1, 1);
         }
         self.output_physical_size = (w, h);
-        self.output_logical_size = self.output_scale.logical_size(w, h);
+        self.output_logical_size = scale.logical_size(w, h);
         let previous = self.output.current_mode();
         let mode = smithay::output::Mode { size: (w, h).into(), refresh: 60_000 };
         self.output.change_current_state(
             Some(mode),
             Some(smithay::utils::Transform::Normal),
-            Some(self.output_scale.smithay_scale()),
+            Some(scale.smithay_scale()),
             Some((0, 0).into()),
         );
         self.output.set_preferred(mode);
@@ -545,7 +556,7 @@ impl TawcState {
     /// Runtime scale changes can reuse this over every live surface before
     /// reconfiguring toplevels.
     pub fn send_surface_scale(&self, surface: &WlSurface) {
-        let scale = self.output_scale;
+        let scale = self.scale_for_surface(surface);
         compositor::with_states(surface, |data| {
             compositor::send_surface_state(
                 surface,
@@ -557,6 +568,34 @@ impl TawcState {
                 fractional.set_preferred_scale(scale.fractional());
             });
         });
+    }
+
+    /// The scale a surface should render at: its host's, else the focused
+    /// host's (a popup or new surface not yet assigned almost always belongs
+    /// to the focused window), else the global output scale.
+    pub fn scale_for_surface(&self, surface: &WlSurface) -> OutputScale {
+        self.desktop
+            .host_for_surface(surface)
+            .or_else(|| self.desktop_visible_host_id())
+            .and_then(|host_id| self.hosts.get(&host_id))
+            .map_or(self.output_scale, |host| host.scale)
+    }
+
+    /// Re-advertise the scale to every surface of one host's windows.
+    /// Collected first: `with_surfaces` holds each surface's state lock, and
+    /// `send_surface_scale` takes it again.
+    pub fn send_host_surface_scales(&self, host_id: &ActivityId) {
+        let mut surfaces: Vec<WlSurface> = Vec::new();
+        for window in self.desktop.windows_for_host(host_id) {
+            window.with_surfaces(|surface, _| {
+                if surface.is_alive() && !surfaces.contains(surface) {
+                    surfaces.push(surface.clone());
+                }
+            });
+        }
+        for surface in &surfaces {
+            self.send_surface_scale(surface);
+        }
     }
 
     pub fn host_logical_size(&self, host_id: &ActivityId) -> Option<(i32, i32)> {
@@ -644,8 +683,8 @@ impl TawcState {
         let Some(host) = self.hosts.get(host_id) else {
             return;
         };
-        let size = host.physical_size;
-        self.set_output_mode((size.w, size.h));
+        let (size, scale) = (host.physical_size, host.scale);
+        self.set_output_mode_scaled((size.w, size.h), scale);
         self.advertised_output_host = Some(host_id.clone());
     }
 
@@ -742,6 +781,7 @@ impl TawcState {
             || self.host_fullscreen.contains_key(host_id);
         self.window_metadata.remove(host_id);
         self.host_fullscreen.remove(host_id);
+        self.host_density_ratio.remove(host_id);
         self.desktop.clear_foreground_host_if(host_id);
         if self.advertised_output_host.as_ref() == Some(host_id) {
             self.advertised_output_host = None;
@@ -1021,6 +1061,8 @@ impl XdgShellHandler for TawcState {
         let window = Window::new_wayland_window(surface.clone());
         self.desktop
             .add_wayland_window(surface.wl_surface().clone(), window);
+        // new_surface advertised a guess; now the host (and its density) is known.
+        self.send_surface_scale(surface.wl_surface());
         self.sync_desktop_hosts();
         self.toplevels_changed = true;
         if let Some(focus) = new_focus.as_ref() {

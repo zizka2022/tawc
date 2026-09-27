@@ -37,12 +37,16 @@ impl OutputScale {
         physical / self.fractional
     }
 
-}
-
-fn logical_extent(physical: i32, scale: f64) -> i32 {
-    if physical <= 0 {
-        0
-    } else {
-        ((physical as f64 / scale).round() as i32).max(1)
+    /// This scale adjusted for a display whose density is `ratio` times the
+    /// phone's (e.g. 160/450 dpi for a DeX monitor). Never drops below 1.0
+    /// (or below `self` if that is already under 1.0): sub-1 scales make
+    /// text unreadably small on a monitor. Rounded to the 1/120 steps of
+    /// wp_fractional_scale_v1.
+    pub fn for_density_ratio(self, ratio: f64) -> Self {
+        if !ratio.is_finite() || ratio <= 0.0 || ratio == 1.0 {
+            return self;
+        }
+        let scaled = (self.fractional * ratio).max(self.fractional.min(1.0));
+        Self::new(((scaled * 120.0).round() / 120.0).max(1.0 / 120.0))
     }
 }

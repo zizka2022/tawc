@@ -302,8 +302,16 @@ Android window focus. So "visible" and "focused" are tracked apart:
   `isChangingConfigurations`, and the new instance re-registers the same
   host.
 
-Still single: one `wl_output` and one global scale, so mixed-DPI displays
-share the phone's scale.
+Per-display scale: each `CompositorActivity` reports its display density
+relative to the phone's (`nativeOnActivityDensityChanged`, from `onCreate`
+and `onConfigurationChanged`). The host's effective scale is the global
+scale times that ratio, floored at 1.0 (`OutputScale::for_density_ratio`):
+on the phone nothing changes, on a 160 dpi DeX monitor scale 2.0 becomes
+1.0. Rendering, touch/pointer coordinates, and each surface's preferred
+scale (fractional-scale + wl_surface v6) use the host's scale; unassigned
+surfaces (popups) take the focused host's. There is still one `wl_output`;
+its mode and scale follow the advertised (focused) host. `query-state`
+reports `host_scales=<scale>:<w>x<h>,...`.
 
 ## Input / focus / IME
 

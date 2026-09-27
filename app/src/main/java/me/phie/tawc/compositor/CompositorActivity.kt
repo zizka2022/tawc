@@ -6,6 +6,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.res.Configuration
+import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -114,6 +116,9 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
             finishAndRemoveTask()
             return
         }
+        // Before the surface exists, so the host's first configure already
+        // uses this display's scale.
+        reportDensity(resources.configuration)
 
         // Ensure and bind the CompositorService. The Service owns the
         // compositor thread (and runs xkb-data extraction) and survives
@@ -145,6 +150,21 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
         registerBackCallback()
 
         initialized = true
+    }
+
+    // Display moves (e.g. phone <-> DeX) arrive here instead of recreating
+    // the Activity; see configChanges in the manifest.
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (initialized) reportDensity(newConfig)
+    }
+
+    private fun reportDensity(config: Configuration) {
+        // System resources follow the built-in display, the reference the
+        // user's scale setting is chosen on.
+        val phoneDpi = Resources.getSystem().displayMetrics.densityDpi
+        if (config.densityDpi <= 0 || phoneDpi <= 0) return
+        NativeBridge.nativeOnActivityDensityChanged(activityId, config.densityDpi.toFloat() / phoneDpi)
     }
 
     override fun onDestroy() {

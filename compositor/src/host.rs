@@ -45,8 +45,17 @@ pub struct OutputHost {
     pub physical_size: Size<i32, Physical>,
 
     /// Logical dimensions sent to clients in `xdg_toplevel.configure`
-    /// (= physical_size / output_scale, rounded to logical pixels).
+    /// (= physical_size / scale, rounded to logical pixels).
     pub logical_size: (i32, i32),
+
+    /// This host's display density relative to the phone's (1.0 on the
+    /// phone, ~0.36 on a 160 dpi DeX monitor). Set by `DensityChanged`.
+    pub density_ratio: f64,
+
+    /// Effective scale: the global output scale adjusted by `density_ratio`
+    /// (`OutputScale::for_density_ratio`). Used for rendering, input and
+    /// the preferred scale of this host's surfaces.
+    pub scale: OutputScale,
 
     /// True iff Android currently shows this Activity in the foreground.
     /// Drives `Activated`/`Suspended` configure events on assigned
@@ -81,6 +90,8 @@ impl OutputHost {
             egl_surface: None,
             physical_size: Size::from((w, h)),
             logical_size: scale.logical_size(w, h),
+            density_ratio: 1.0,
+            scale,
             foreground: false,
             fullscreen: false,
         }
@@ -99,8 +110,7 @@ impl OutputHost {
             unsafe { ndk_sys::ANativeWindow_release(self.native_window as *mut _) };
         }
         self.native_window = native_window;
-        self.physical_size = Size::from((w, h));
-        self.logical_size = scale.logical_size(w, h);
+        self.update_size(w, h, scale);
     }
 
     /// Forget the Surface (Activity backgrounded / surface destroyed).
@@ -114,13 +124,23 @@ impl OutputHost {
         }
     }
 
-    pub fn update_size(&mut self, w: i32, h: i32, scale: OutputScale) {
+    /// `base` is the global output scale; the host applies its density ratio.
+    pub fn update_size(&mut self, w: i32, h: i32, base: OutputScale) {
         self.physical_size = Size::from((w, h));
-        self.logical_size = scale.logical_size(w, h);
+        self.update_scale(base);
     }
 
-    pub fn update_scale(&mut self, scale: OutputScale) {
-        self.logical_size = scale.logical_size(self.physical_size.w, self.physical_size.h);
+    pub fn update_scale(&mut self, base: OutputScale) {
+        self.scale = base.for_density_ratio(self.density_ratio);
+        self.logical_size = self.scale.logical_size(self.physical_size.w, self.physical_size.h);
+    }
+
+    /// Returns whether the effective scale changed.
+    pub fn set_density_ratio(&mut self, ratio: f64, base: OutputScale) -> bool {
+        let before = self.scale;
+        self.density_ratio = ratio;
+        self.update_scale(base);
+        self.scale != before
     }
 }
 
@@ -178,6 +198,9 @@ pub enum SurfaceEvent {
     FocusChanged { activity_id: ActivityId, has_focus: bool },
     /// Runtime output scale change from Settings / test broker.
     OutputScaleChanged { scale: f64 },
+    /// The Activity's display density relative to the phone's, from
+    /// `onCreate` and `onConfigurationChanged` (e.g. moved to a DeX display).
+    DensityChanged { activity_id: ActivityId, ratio: f64 },
     /// Runtime toggle for the compositor-owned Xwayland process.
     XwaylandChanged { enabled: bool },
     /// Runtime toggle for the contained GTK3 broken menubar workaround.
