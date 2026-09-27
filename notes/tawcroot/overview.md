@@ -209,8 +209,10 @@ foreclose future expansion.
   proot's `-0`: `getuid`/`geteuid`/`getgid`/`getegid` report 0,
   `SO_PEERCRED` reports same-uid unix-socket peers as root (so
   peer-cred-authenticating servers like tmux/dbus accept guest
-  clients; `SCM_CREDENTIALS` is deliberately not rewritten — see
-  the handler comment in `syscalls_socket.c`), `stat`-family
+  clients), sent `SCM_CREDENTIALS` swap virtual 0 for the real
+  uid/gid (the kernel EPERMs a send claiming root, which broke every
+  PulseAudio client; received ones are deliberately not rewritten —
+  see the handler comments in `syscalls_socket.c`), `stat`-family
   results are decorated to look root-owned where appropriate, and
   ownership-changing syscalls are treated as compatibility
   operations rather than real privilege changes. We

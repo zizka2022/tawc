@@ -8,7 +8,8 @@ as a PipeWire drop-in plus `/usr/lib/tawc/audio-session`, which
 `compositor/RootfsAudio.kt` runs in one rootfs for the compositor's lifetime
 (the distro's `pipewire`, `wireplumber`, `pipewire-pulse` must be installed;
 nothing installs them yet). tawcroot answers a sibling's `/proc/<pid>/root`
-with the guest root, so PipeWire's flatpak check passes with stock config.
+with the guest root and sends Pulse's SCM_CREDENTIALS with the real uid, so
+PipeWire and pipewire-pulse work with stock config over unix sockets.
 Milestone 3: start/stop with the compositor is done; underrun logging is not.
 Capture is not started.
 
