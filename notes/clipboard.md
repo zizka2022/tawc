@@ -12,7 +12,8 @@ Android 12+ toasts "app pasted from your clipboard" on
 eagerly:
 
 - All sync points (clip-changed listener, window-focus regain with a
-  short retry while reads are still denied, service start) read only the
+  short retry while reads are still denied, service start, paste-shaped
+  input — see below) read only the
   `ClipDescription` — which never toasts — and, for clips advertising
   text/plain or text/html, call
   `nativeOnAndroidClipAvailable(timestampMs, ownWrite)`. `ownWrite` means
@@ -35,6 +36,14 @@ eagerly:
   clause means the compositor takes ownership when a mirrored owner
   dies, so paste keeps working. `last_announced_android_clip_ts` lives
   in `TawcState`.
+- Paste-shaped input also syncs: a key down with Ctrl/Shift/Meta held
+  (or Insert/Paste), a touch or mouse press. On DeX the focus-gain sync
+  alone missed clips copied in another app (focus is per display; the
+  description read stayed denied past the retries), so a client kept
+  pasting its own stale selection. `ClipboardBridge.syncOnInput` reads
+  the description and announces only a timestamp it hasn't announced;
+  untimestamped clips are left to the focus sync, since re-announcing
+  them per keypress would keep clobbering client selections.
 - Content is fetched when a client actually pastes: both
   `send_selection` paths (Wayland `SelectionHandler` in compositor.rs,
   X11 `XwmHandler` in xwayland.rs) spawn a `clipboard-fetch-android`
