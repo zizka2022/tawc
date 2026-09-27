@@ -7,15 +7,17 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.res.Configuration
-import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.os.IBinder
+import android.util.DisplayMetrics
 import android.util.Log
+import android.view.Display
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -160,11 +162,22 @@ class CompositorActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun reportDensity(config: Configuration) {
-        // System resources follow the built-in display, the reference the
-        // user's scale setting is chosen on.
-        val phoneDpi = Resources.getSystem().displayMetrics.densityDpi
+        // The built-in display's own density is the reference the user's
+        // scale setting is chosen on. Not Resources.getSystem(): on Samsung
+        // DeX the global configuration follows the focused display (160 dpi
+        // while a DeX window is focused), so it is not a stable reference.
+        val phoneDpi = builtInDisplayDpi()
         if (config.densityDpi <= 0 || phoneDpi <= 0) return
         NativeBridge.nativeOnActivityDensityChanged(activityId, config.densityDpi.toFloat() / phoneDpi)
+    }
+
+    private fun builtInDisplayDpi(): Int {
+        val display = getSystemService(DisplayManager::class.java)
+            ?.getDisplay(Display.DEFAULT_DISPLAY) ?: return 0
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        display.getRealMetrics(metrics)
+        return metrics.densityDpi
     }
 
     override fun onDestroy() {
