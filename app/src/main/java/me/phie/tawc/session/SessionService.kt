@@ -1,5 +1,6 @@
 package me.phie.tawc.session
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -13,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +45,7 @@ class SessionService : Service() {
     private var strays = 0
     private var strayJob: Job? = null
     private var stopped = false
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -62,13 +65,26 @@ class SessionService : Service() {
                 }
             }
         }
+        scope.launch {
+            SessionAwake.awake.collect { on ->
+                if (stopped) return@collect
+                setWakeLock(on)
+                notifyNow()
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Every startForegroundService must be answered, even when
         // already in the foreground.
         goForeground()
-        if (intent?.action == ACTION_EXIT) SessionExit.killEverything(applicationContext)
+        when (intent?.action) {
+            ACTION_EXIT -> {
+                SessionAwake.set(false)
+                SessionExit.killEverything(applicationContext)
+            }
+            ACTION_AWAKE -> SessionAwake.toggle()
+        }
         // Not sticky: after a process kill every guest is dead, and a
         // restart would call startForeground from the background.
         return START_NOT_STICKY
@@ -77,6 +93,8 @@ class SessionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        setWakeLock(false)
+        SessionAwake.set(false)
         SessionHolds.serviceStopped(this)
         scope.cancel()
         super.onDestroy()
@@ -99,6 +117,7 @@ class SessionService : Service() {
                 // in between and be torn down unanswered.
                 if (count == 0 && SessionHolds.serviceStopIfIdle(this@SessionService)) {
                     stopped = true
+                    setWakeLock(false)
                     ServiceCompat.stopForeground(this@SessionService, ServiceCompat.STOP_FOREGROUND_REMOVE)
                     stopSelf()
                     return@launch
@@ -115,6 +134,20 @@ class SessionService : Service() {
     } catch (t: Throwable) {
         Log.w(TAG, "stray scan failed", t)
         0
+    }
+
+    // No timeout on purpose: held until the user toggles it off or the
+    // session ends, like Termux's.
+    @SuppressLint("WakelockTimeout")
+    private fun setWakeLock(on: Boolean) {
+        val lock = wakeLock ?: getSystemService(PowerManager::class.java)
+            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)
+            ?.apply { setReferenceCounted(false) }
+            ?.also { wakeLock = it }
+            ?: return
+        if (on == lock.isHeld) return
+        if (on) lock.acquire() else lock.release()
+        Log.i(TAG, if (on) "wakelock acquired" else "wakelock released")
     }
 
     private fun currentReasons(): List<Reason> {
@@ -136,10 +169,13 @@ class SessionService : Service() {
             ?.notify(NOTIFICATION_ID, buildNotification())
     }
 
-    private fun buildNotification(): Notification =
-        Notification.Builder(this, CHANNEL_ID)
+    private fun buildNotification(): Notification {
+        val awake = SessionAwake.awake.value
+        var text = describe(SessionSummary.of(currentReasons()))
+        if (awake) text += " · " + getString(R.string.session_awake)
+        return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.session_notification_title))
-            .setContentText(describe(SessionSummary.of(currentReasons())))
+            .setContentText(text)
             .setSmallIcon(R.drawable.ic_terminal)
             .setContentIntent(homePendingIntent())
             .setOngoing(true)
@@ -152,7 +188,18 @@ class SessionService : Service() {
                     exitPendingIntent(),
                 ).build(),
             )
+            .addAction(
+                Notification.Action.Builder(
+                    Icon.createWithResource(this, R.drawable.ic_lock),
+                    getString(
+                        if (awake) R.string.session_notification_release_awake
+                        else R.string.session_notification_keep_awake,
+                    ),
+                    servicePendingIntent(2, ACTION_AWAKE),
+                ).build(),
+            )
             .build()
+    }
 
     private fun describe(s: SessionSummary): String {
         val parts = ArrayList<String>()
@@ -191,11 +238,14 @@ class SessionService : Service() {
         )
     }
 
-    private fun exitPendingIntent(): PendingIntent = PendingIntent.getService(
-        this, 1,
-        Intent(this, SessionService::class.java).setAction(ACTION_EXIT),
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
+    private fun exitPendingIntent(): PendingIntent = servicePendingIntent(1, ACTION_EXIT)
+
+    private fun servicePendingIntent(requestCode: Int, action: String): PendingIntent =
+        PendingIntent.getService(
+            this, requestCode,
+            Intent(this, SessionService::class.java).setAction(action),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
 
     private fun ensureChannel() {
         val nm = getSystemService(NotificationManager::class.java) ?: return
@@ -220,6 +270,8 @@ class SessionService : Service() {
         private const val CHANNEL_ID = "tawc_session"
         private const val LEGACY_CHANNEL_ID = "tawc_compositor"
         private const val ACTION_EXIT = "me.phie.tawc.session.EXIT"
+        private const val ACTION_AWAKE = "me.phie.tawc.session.TOGGLE_AWAKE"
+        private const val WAKE_LOCK_TAG = "tawc:session"
         private const val STRAY_POLL_MS = 15_000L
 
         private val loggedStartFailure = AtomicBoolean(false)

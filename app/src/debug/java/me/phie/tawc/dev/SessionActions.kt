@@ -6,6 +6,7 @@ import android.os.SystemClock
 import me.phie.tawc.compositor.CompositorService
 import me.phie.tawc.compositor.NativeBridge
 import me.phie.tawc.session.Reason
+import me.phie.tawc.session.SessionAwake
 import me.phie.tawc.session.SessionExit
 import me.phie.tawc.session.SessionHolds
 
@@ -15,6 +16,7 @@ internal object SessionActions {
         ActionRegistry.register("session-state", StateAction)
         ActionRegistry.register("session-exit", ExitAction)
         ActionRegistry.register("compositor-hold", CompositorHoldAction)
+        ActionRegistry.register("session-awake", AwakeAction)
     }
 
     /**
@@ -42,6 +44,27 @@ internal object SessionActions {
             }
             ctx.err("compositor-hold: compositor did not start within 10s")
             return 1
+        }
+    }
+
+    /**
+     * `session-awake [--arg awake=on|off]` — the notification's "Keep
+     * awake" toggle; prints the resulting `on`/`off`. The service clears
+     * it when it stops, so set it while a session runs.
+     */
+    private object AwakeAction : BrokerAction {
+        override fun run(args: Map<String, String>, ctx: ActionContext): Int {
+            when (args["awake"]) {
+                null -> Unit
+                "on" -> SessionAwake.set(true)
+                "off" -> SessionAwake.set(false)
+                else -> {
+                    ctx.err("session-awake: --arg awake=on|off")
+                    return 2
+                }
+            }
+            ctx.out(if (SessionAwake.awake.value) "on" else "off")
+            return 0
         }
     }
 
