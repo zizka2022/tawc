@@ -82,8 +82,12 @@ Measured (Galaxy S25 Ultra, Android 16, 2026-09-27; wireless adb, charger
 and monitor unplugged, screen off, foot open, 1 Hz rootfs ticker + 5 s
 `curl` probe): 15 min held — 880 ticks, max gap 1.0 s, 174/174 probes OK;
 the next 15 min released — 321 ticks (36 %), 85 stalls up to 31 s,
-64/64 probes OK (fewer, not failed). Device-idle stayed `INACTIVE`; deep
-doze was not reached in either window.
+64/64 probes OK (fewer, not failed). Deep doze, forced with
+`dumpsys deviceidle force-idle` (screen off, on battery; refused while the
+screen is on), 8 min held: `IDLE` throughout, TAWC at `curProcState=4`,
+lock not disabled, max gap 1.0 s, 93/93 probes OK. Doze ignores wakelocks
+only below foreground-service state, so no battery-optimization exemption
+is needed for this.
 
 Still open from `plans/wakelock.md`: a toggle in the terminal UI and the
 battery-optimization prompt.
