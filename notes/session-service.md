@@ -66,11 +66,33 @@ processes belong to the installer. One notification stands for every
 reason, so a partial exit would leave it up. Holds are not force-released;
 each follows its own process down.
 
+## Keep awake
+
+The FGS keeps the process un-cached, not the CPU running: screen off and
+unplugged, the SoC suspends and every guest stops mid-syscall. The
+notification's second action, **Keep awake** / **Release wakelock**,
+toggles `SessionAwake`; while on, the service holds a non-counted
+`PARTIAL_WAKE_LOCK` `tawc:session` (no timeout, like Termux) and the text
+ends in "· awake". Off by default — an idle shell held awake costs battery
+and only the user knows whether the job matters. Released on toggle-off,
+Exit and service stop; not persisted, so a new service starts released.
+No Wi-Fi lock: the network held up without one (below).
+
+Measured (Galaxy S25 Ultra, Android 16, 2026-09-27; wireless adb, charger
+and monitor unplugged, screen off, foot open, 1 Hz rootfs ticker + 5 s
+`curl` probe): 15 min held — 880 ticks, max gap 1.0 s, 174/174 probes OK;
+the next 15 min released — 321 ticks (36 %), 85 stalls up to 31 s,
+64/64 probes OK (fewer, not failed). Device-idle stayed `INACTIVE`; deep
+doze was not reached in either window.
+
+Still open from `plans/wakelock.md`: a toggle in the terminal UI and the
+battery-optimization prompt.
+
 ## Debug surfaces
 
-Broker actions `session-state` (one line per held reason) and
-`session-exit` (what the Exit button does). Covered by
-`lazy_compositor::test_session_holds_*`.
+Broker actions `session-state` (one line per held reason),
+`session-awake` (the Keep awake toggle) and `session-exit` (what the Exit
+button does). Holds are covered by `lazy_compositor::test_session_holds_*`.
 
 ## Start/stop must share the main thread
 
@@ -117,5 +139,5 @@ bucket, user "restrict battery usage", or an aggressive OEM ROM can still
 cut the uid, and the app is not on the device-idle allowlist
 (`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` is the lever). It does nothing
 for the phantom-process killer or CPU sleep — see
-`issues/phantom-process-killer-kills-rootfs-processes.md` and
-`plans/wakelock.md`.
+`issues/phantom-process-killer-kills-rootfs-processes.md` and Keep awake
+above.
