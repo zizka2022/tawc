@@ -256,6 +256,9 @@
     <string name="session_notification_exit">Exit</string>
     <string name="session_running_command">Running: %1$s</string>
     <string name="session_display_server">Display server running</string>
+    <string name="session_notification_keep_awake">Keep awake</string>
+    <string name="session_notification_release_awake">Release wakelock</string>
+    <string name="session_awake">awake</string>
     <plurals name="session_terminals">
         <item quantity="one">%1$d terminal</item>
         <item quantity="other">%1$d terminals</item>

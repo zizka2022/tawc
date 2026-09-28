@@ -14,6 +14,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The notification's "Keep awake" toggle (plans/wakelock.md). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- All-files access backs the external-storage bind feature
          (notes/external-binds.md): the user binds e.g.
