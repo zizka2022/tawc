@@ -1,7 +1,10 @@
 # Wakelock toggle
 
-Builds on [notes/session-service.md](../notes/session-service.md) (done). Background:
-[issues/no-wakelock-for-rootfs-sessions.md](../issues/no-wakelock-for-rootfs-sessions.md).
+Builds on [notes/session-service.md](../notes/session-service.md) (done).
+
+**Status:** steps 1, 2 and 4 done — notification toggle, measured; see
+"Keep awake" in the notes. The Wi-Fi lock was left out: the network held
+screen-off without one. Remaining: step 3.
 
 ## Problem
 
@@ -12,8 +15,8 @@ server-side timeouts. The app has no `WAKE_LOCK` permission and takes no
 lock. Only `TerminalActivity`'s `keepScreenOn` helps, and only while the
 terminal is the visible activity.
 
-**Not yet verified** — a USB-attached device never suspends. Step 1 below
-is to confirm it before building anything.
+Verified 2026-09-27 on a Galaxy S25 Ultra: 36 % of ticks with the lock
+released.
 
 ## Design
 
