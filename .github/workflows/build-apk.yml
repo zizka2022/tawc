@@ -159,7 +159,7 @@ jobs:
       - name: Unit tests (fork changes)
         run: |
           export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
-          ./gradlew --no-daemon --stacktrace testDebugUnitTest \
+          ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest \
             --tests 'me.phie.tawc.install.RootfsAutostartTest' \
             -PtawcAbis=arm64-v8a -PtawcXwayland=true \
             -PtawcGraphics=libhybris,cpu -PtawcMethods=tawcroot \
