@@ -154,3 +154,13 @@ jobs:
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/debug/SHA256SUMS
           retention-days: 30
+
+      # After the upload, so a test failure still leaves the APK.
+      - name: Unit tests (fork changes)
+        run: |
+          export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+          ./gradlew --no-daemon --stacktrace testDebugUnitTest \
+            --tests 'me.phie.tawc.install.RootfsAutostartTest' \
+            -PtawcAbis=arm64-v8a -PtawcXwayland=true \
+            -PtawcGraphics=libhybris,cpu -PtawcMethods=tawcroot \
+            -PtawcBootstrapPackages=false

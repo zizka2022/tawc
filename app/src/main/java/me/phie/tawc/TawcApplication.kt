@@ -1,10 +1,13 @@
 package me.phie.tawc
 
+import android.app.Activity
 import android.app.Application
+import android.os.Bundle
 import android.util.Log
 import me.phie.tawc.compositor.CompositorService
 import me.phie.tawc.install.BootstrapCache
 import me.phie.tawc.install.InstallationStore
+import me.phie.tawc.install.RootfsAutostart
 import me.phie.tawc.install.RootfsTmpSweeper
 import me.phie.tawc.install.TawcInstaller
 import me.phie.tawc.ops.OperationsNotificationCenter
@@ -19,6 +22,7 @@ import kotlin.concurrent.thread
  *    `cacheDir` under storage pressure, so a 200 MB tarball can squat
  *    on disk for months without our own TTL ([BootstrapCache.sweepStale]).
  *  - Start the dev exec broker (debug builds only — [DevHooks]).
+ *  - Run rootfs autostart entries once an activity is up ([RootfsAutostart]).
  *
  * Per-install `nativeLibraryDir` (which moves between APKs as
  * `/data/app/~~<hash>/...`) is resolved fresh in
@@ -87,12 +91,29 @@ class TawcApplication : Application() {
             } catch (t: Throwable) {
                 Log.w(TAG, "rootfs /tmp sweep failed", t)
             }
+            // After installAll: autostart entries may use refreshed files.
+            RootfsAutostart.onStartupDone(this)
         }
+        registerActivityLifecycleCallbacks(FirstActivityStart())
         // Dev-only exec broker and its action handlers. [DevHooks] has
         // two implementations at the same FQCN — the real one in
         // `src/debug/java`, an empty one in `src/release/java` — so the
         // broker isn't in the release APK at all. See notes/exec-broker.md.
         DevHooks.start(this)
+    }
+
+    /** Tells [RootfsAutostart] once, then unregisters. */
+    private inner class FirstActivityStart : ActivityLifecycleCallbacks {
+        override fun onActivityStarted(activity: Activity) {
+            unregisterActivityLifecycleCallbacks(this)
+            RootfsAutostart.onActivityStarted(this@TawcApplication)
+        }
+        override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+        override fun onActivityResumed(activity: Activity) {}
+        override fun onActivityPaused(activity: Activity) {}
+        override fun onActivityStopped(activity: Activity) {}
+        override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+        override fun onActivityDestroyed(activity: Activity) {}
     }
 
     companion object {

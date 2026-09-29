@@ -22,6 +22,7 @@ Start here when looking for durable project context. `AGENTS.md` keeps only alwa
 - [rendering.md](rendering.md) - window management, coordinates, SHM/AHB rendering behavior.
 - [session-service.md](session-service.md) - the one foreground service: holds, stray tail, notification, Exit.
 - [rootfs-sessions.md](rootfs-sessions.md) - session invariant for rootfs entry paths.
+- [autostart.md](autostart.md) - `~/.config/tawc/autostart/` entries run once per app process.
 - [log-screen.md](log-screen.md) - shared operation/log-screen UI abstraction.
 - [launcher.md](launcher.md) - distro launcher and `.desktop` scanner.
 - [terminal.md](terminal.md) - in-app per-distro terminal (vendored termux terminal modules, tawcroot pty spawn path).
