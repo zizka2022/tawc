@@ -154,13 +154,14 @@
             android:name=".ops.CancelOperationReceiver"
             android:exported="false" />
 
-        <!-- Rootfs autostart at boot, for installs that opt in
-             (notes/autostart.md). BOOT_COMPLETED is a protected broadcast. -->
+        <!-- Rootfs autostart at boot and after an app update, for installs
+             that opt in (notes/autostart.md). Both are protected broadcasts. -->
         <receiver
             android:name=".install.BootAutostartReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 

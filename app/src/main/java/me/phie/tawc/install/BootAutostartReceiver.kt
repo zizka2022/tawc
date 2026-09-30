@@ -8,13 +8,17 @@ import me.phie.tawc.session.SessionHolds
 
 /**
  * Runs [RootfsAutostart] at boot for installs that opted in with
- * [RootfsAutostart.AT_BOOT]. BOOT_COMPLETED is one of the moments Android
- * lets a background app start a foreground service, so the hold is taken
- * right here; the entries then take their own.
+ * [RootfsAutostart.AT_BOOT], and again after TAWC itself is updated, which
+ * stops everything the same way a reboot does. BOOT_COMPLETED and
+ * MY_PACKAGE_REPLACED are among the moments Android lets a background app
+ * start a foreground service, so the hold is taken right here; the entries
+ * then take their own.
  */
 class BootAutostartReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED &&
+            intent.action != Intent.ACTION_MY_PACKAGE_REPLACED
+        ) return
         if (!RootfsAutostart.anyAtBoot(context)) return
         val hold = SessionHolds.acquire(Reason.Command("autostart"))
         RootfsAutostart.onBoot(context, hold)
