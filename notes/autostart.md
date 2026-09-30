@@ -20,4 +20,11 @@ app process: after the first activity starts and after
 - Not XDG autostart on purpose: `~/.config/autostart` / `/etc/xdg/autostart`
   are desktop-session items (e.g. at-spi) that TAWC should not run on
   app start.
-- Not at boot: nothing runs until TAWC is opened.
+- At boot only by opt-in: an install whose rootfs has
+  `/root/.config/tawc/autostart-at-boot` also runs its entries on
+  BOOT_COMPLETED (`install/BootAutostartReceiver.kt`), which lets a
+  background app start its foreground service. The receiver takes a hold
+  at once, so the service is up inside that allowance; it is released
+  after the entries have started. Each install runs at most once per
+  process, so opening TAWC later doesn't run it again. Other installs
+  still wait for an activity.

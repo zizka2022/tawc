@@ -5,6 +5,8 @@
 
     <!-- Bootstrap tarballs are downloaded directly by the install package. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Opt-in rootfs autostart at boot (notes/autostart.md). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- SessionService keeps the process in the foreground while anything
          is alive in a rootfs (terminals, commands, the compositor);
          specialUse is the correct foregroundServiceType on Android 14+
@@ -151,6 +153,16 @@
         <receiver
             android:name=".ops.CancelOperationReceiver"
             android:exported="false" />
+
+        <!-- Rootfs autostart at boot, for installs that opt in
+             (notes/autostart.md). BOOT_COMPLETED is a protected broadcast. -->
+        <receiver
+            android:name=".install.BootAutostartReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <!-- In-app terminal, one per distro. Same document trick as
              CompositorActivity: documentLaunchMode="intoExisting" +
