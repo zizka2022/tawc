@@ -39,17 +39,14 @@
 #endif
 
 /* Per-thread "blocked" shadow. tid is the kernel tid (gettid()).
- * Unknown tids default to 0 (not blocked). */
+ * Unknown tids default to 0 (not blocked). _set returns -1 when the
+ * table is full; reap dead tids and retry. */
 int  tawc_sigshadow_blocked_get(int tid);
-void tawc_sigshadow_blocked_set(int tid, int blocked);
+int  tawc_sigshadow_blocked_set(int tid, int blocked);
 
-/* Drop a tid's slot. Called from handle_exit on the dying thread before
- * forwarding the exit(2) syscall, so a future thread reusing this tid
- * sees the default (unblocked) state instead of the previous owner's
- * stale bit. Slot is tombstoned (probe-skipped, reclaimable by a later
- * blocked_set claim). Single-writer-per-tid: only the dying thread
- * itself calls this for its own tid. */
-void tawc_sigshadow_blocked_clear(int tid);
+/* Tombstone the slot of every tid for which `alive` returns 0. exit(2)
+ * isn't trapped, so this is how exited threads' slots come back. */
+void tawc_sigshadow_blocked_reap(int (*alive)(int tid));
 
 /* Process-global sigaction shadow. _get fills `out` with exactly
  * TAWC_KERN_SIGACTION_SIZE bytes from the most recent _set, or all

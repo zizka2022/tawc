@@ -8,10 +8,9 @@
  * Slot lifetime. The wrapper claims a slot keyed by the trapping
  * thread's tid, and releases it when the handler returns. Two ways a
  * slot could leak:
- *   - a handler that never returns. `handle_exit` is the one such
- *     handler, so the wrapper skips the claim for it entirely; the
- *     exec commit path calls tawcroot_rescue_restore() and then
- *     replaces the process image (fresh BSS, whole table gone).
+ *   - a handler that never returns. The exec commit path calls
+ *     tawcroot_rescue_restore() and then replaces the process image
+ *     (fresh BSS, whole table gone).
  *   - fork. `clone` is not in the trap set, so a fork never happens
  *     *inside* the wrapper; a multi-threaded guest that forks while a
  *     sibling thread is mid-trap leaves that sibling's slot claimed in
@@ -351,10 +350,6 @@ long tawcroot_dispatch_call(const tawcroot_syscall_args *args, ucontext_t *uc)
 {
 	tawcroot_handler_fn fn = tawcroot_dispatch_get((int)args->nr);
 	if (!fn) return TAWC_ENOSYS;
-
-	/* handle_exit forwards exit(2) and never comes back — claiming a
-	 * slot for it would leak one per guest thread teardown. */
-	if (args->nr == TAWC_SYS_exit) return fn(args, uc);
 
 	int idx = slot_claim(current_tid());
 	if (idx < 0) return fn(args, uc);

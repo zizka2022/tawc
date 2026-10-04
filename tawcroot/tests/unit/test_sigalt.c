@@ -73,7 +73,7 @@ test(sigalt_on_stack_is_eperm_and_reported)
 	test_int_eq(old.ss_flags, SS_ONSTACK);
 }
 
-test(sigalt_disable_and_exit_free_slots)
+test(sigalt_disable_frees_slots)
 {
 	tawc_sigalt_reset();
 	stack_t small = mk(g_buf, 0, TAWC_SIGALT_KERN_MIN);
@@ -91,7 +91,7 @@ test(sigalt_disable_and_exit_free_slots)
 	stack_t dis = mk(NULL, SS_DISABLE, 0);
 	tawc_sigalt_commit(&cur[0], &dis);
 	test_int_eq(cur[0].ss_size, 0);
-	tawc_sigalt_thread_exit(&cur[1]);
+	tawc_sigalt_commit(&cur[1], &dis);
 
 	stack_t a = DISABLED, b = DISABLED, c = DISABLED;
 	tawc_sigalt_commit(&a, &small);
