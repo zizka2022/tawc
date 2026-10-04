@@ -6,10 +6,12 @@
  * view (ss_sp inside the slab), never from a tid: a fork child keeps
  * working with its new tid, and tid reuse can't alias.
  *
- * Known leaks, all bounded by the exhaustion fallback: a thread killed
- * without exit(2); other threads' slots in a fork child; a slot claimed
- * by sigaltstack() inside an SS_AUTODISARM handler (the kernel drops
- * that setting when the handler returns). A CLONE_VM|CLONE_VFORK child
+ * Known leaks, all bounded by the exhaustion fallback: a thread that
+ * exits without SS_DISABLE first (exit(2) isn't trapped; Rust disables
+ * its altstack, Go's are large enough to need no slot); other threads'
+ * slots in a fork child; a slot claimed by sigaltstack() inside an
+ * SS_AUTODISARM handler (the kernel drops that setting when the
+ * handler returns). A CLONE_VM|CLONE_VFORK child
  * that replaces an inherited substituted stack frees the parent's slot
  * under it — accepted; nothing known does this. */
 
@@ -115,12 +117,6 @@ void tawc_sigalt_commit(stack_t *cur, const stack_t *new_ss)
 	}
 	if (k_old >= 0 && k_old != k_new)
 		slot_release(k_old);
-}
-
-void tawc_sigalt_thread_exit(const stack_t *cur)
-{
-	int k = slot_of(cur);
-	if (k >= 0) slot_release(k);
 }
 
 void tawc_sigalt_reset(void)

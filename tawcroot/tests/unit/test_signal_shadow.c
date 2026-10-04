@@ -83,130 +83,54 @@ test(blocked_set_zero_on_unknown_tid_does_not_claim_slot)
 	test_int_eq(tawc_sigshadow_blocked_get(42), 1);
 }
 
-/* Genuine overflow — N_SLOTS distinct tids with blocked=1 plus one
- * more — must crash loudly via __builtin_trap rather than silently
- * dropping the update. We fork so the crash doesn't take the test
- * runner with us, and assert the child died on SIGILL/SIGTRAP (which
- * is what __builtin_trap produces; the exact signal varies by arch
- * — x86_64 emits ud2 → SIGILL, aarch64 emits brk → SIGTRAP). */
-test(blocked_set_overflow_crashes_loudly)
-{
-	unsigned cap = tawc_sigshadow_capacity();
-
-	pid_t pid = fork();
-	test_true(pid != -1);
-	if (pid == 0) {
-		/* Mute libc's abort/trap chatter so cleat's stdout
-		 * stays clean even when this test runs. */
-		int devnull = open("/dev/null", O_WRONLY);
-		if (devnull >= 0) {
-			dup2(devnull, 2);
-			close(devnull);
-		}
-		tawc_sigshadow_reset();
-		/* Fill every slot with a distinct blocked-tid. Use
-		 * tids spaced by a prime to spread across the hash. */
-		for (unsigned i = 0; i < cap; i++) {
-			tawc_sigshadow_blocked_set((int)(1 + i * 1009), 1);
-		}
-		/* One more distinct tid → table is full of distinct
-		 * blocked entries → must trap. If we return from this
-		 * call the assumption is broken; exit with a sentinel
-		 * the parent can recognize as "trap didn't fire". */
-		tawc_sigshadow_blocked_set(0x7fffffff, 1);
-		_exit(123);
-	}
-
-	int status = 0;
-	pid_t got = waitpid(pid, &status, 0);
-	test_int_eq(got, pid);
-	test_true(WIFSIGNALED(status));
-	int sig = WTERMSIG(status);
-	test_true(sig == SIGILL || sig == SIGTRAP || sig == SIGABRT);
-}
-
-/* blocked_clear is the exit-side hook: when a thread exits its slot must
- * stop reading as "blocked" so a future thread reusing the tid doesn't
- * see stale state. Single-thread basics. */
-test(blocked_clear_unknown_tid_is_noop)
-{
-	tawc_sigshadow_reset();
-	tawc_sigshadow_blocked_clear(1234);
-	test_int_eq(tawc_sigshadow_blocked_get(1234), 0);
-}
-
-test(blocked_clear_resets_blocked_bit)
-{
-	tawc_sigshadow_reset();
-	tawc_sigshadow_blocked_set(7777, 1);
-	test_int_eq(tawc_sigshadow_blocked_get(7777), 1);
-
-	tawc_sigshadow_blocked_clear(7777);
-	test_int_eq(tawc_sigshadow_blocked_get(7777), 0);
-}
-
-/* The TID-reuse race: thread A blocks SIGSYS, exits without unblocking,
- * the kernel reuses A's tid for thread B. With the exit-hook, A's slot
- * is cleared, so B reads the default (unblocked) state. Without the
- * hook, B would read A's stale blocked=1 until B issued its own
- * rt_sigprocmask. Simulated by writing then clearing then reading the
- * same tid (B from the table's perspective is indistinguishable from
- * A — same tid value). */
-test(blocked_clear_closes_tid_reuse_race)
-{
-	tawc_sigshadow_reset();
-	int tid = 4242;
-	tawc_sigshadow_blocked_set(tid, 1);
-	tawc_sigshadow_blocked_clear(tid);
-	/* "B" inherits the same tid number; should see default 0. */
-	test_int_eq(tawc_sigshadow_blocked_get(tid), 0);
-}
-
-/* Slot reclamation: clear-then-set on a different tid that hashes to
- * the same slot should reuse the cleared slot rather than chewing
- * additional capacity. Pre-fill all but one slot; clear one; verify
- * a NEW set succeeds (would trap if the cleared slot weren't reusable). */
-test(blocked_clear_makes_slot_reclaimable)
+/* A full table reports -1 instead of dropping the update; the caller
+ * reaps and retries. */
+test(blocked_set_full_table_reports)
 {
 	unsigned cap = tawc_sigshadow_capacity();
 	tawc_sigshadow_reset();
-	/* Fill the table to capacity with distinct blocked tids. */
 	for (unsigned i = 0; i < cap; i++)
-		tawc_sigshadow_blocked_set((int)(1 + i * 1009), 1);
-	/* Clear one; the slot should now be reclaimable as a tombstone. */
-	tawc_sigshadow_blocked_clear((int)(1 + 5 * 1009));
-	/* A new distinct tid must successfully set blocked=1 — if the
-	 * cleared slot weren't reclaimable this would __builtin_trap. */
-	tawc_sigshadow_blocked_set(0x7fffffff, 1);
+		test_int_eq(tawc_sigshadow_blocked_set((int)(1 + i * 1009), 1), 0);
+	test_int_eq(tawc_sigshadow_blocked_set(0x7fffffff, 1), -1);
+	test_int_eq(tawc_sigshadow_blocked_get(0x7fffffff), 0);
+}
+
+static int alive_odd(int tid) { return tid & 1; }
+static int alive_none(int tid) { (void)tid; return 0; }
+
+/* exit(2) isn't trapped, so exited threads' slots linger until a reap.
+ * Reaped tids read as unblocked, live ones keep their bit, and the
+ * freed slots are claimable again. */
+test(blocked_reap_frees_dead_tids)
+{
+	unsigned cap = tawc_sigshadow_capacity();
+	tawc_sigshadow_reset();
+	for (unsigned i = 0; i < cap; i++)
+		tawc_sigshadow_blocked_set((int)(2 + i * 1009), 1);
+	tawc_sigshadow_blocked_reap(alive_odd);
+	for (unsigned i = 0; i < cap; i++) {
+		int tid = (int)(2 + i * 1009);
+		test_int_eq(tawc_sigshadow_blocked_get(tid), tid & 1);
+	}
+	test_int_eq(tawc_sigshadow_blocked_set(0x7fffffff, 1), 0);
 	test_int_eq(tawc_sigshadow_blocked_get(0x7fffffff), 1);
 }
 
-/* Tombstones must not break the probe chain. Force a hash collision:
- * insert tids X and Y where Y's slot was reached by probing past X,
- * then clear X. A get(Y) must still find Y by probing past the
- * tombstoned X-slot. We don't know the hash function externally, so
- * insert many tids — at least some pair will collide — and verify
- * that all set tids remain readable after one is cleared from the
- * middle of the probe sequence. */
-test(blocked_clear_tombstone_does_not_break_probe_chain)
+/* Tombstones left by a reap must not break probe chains. */
+test(blocked_reap_tombstones_keep_probe_chain)
 {
 	tawc_sigshadow_reset();
 	enum { N = 64 };
-	int tids[N];
+	for (int i = 0; i < N; i++)
+		tawc_sigshadow_blocked_set(100000 + i * 17, 1);
+	tawc_sigshadow_blocked_reap(alive_odd);
 	for (int i = 0; i < N; i++) {
-		tids[i] = 100000 + i * 17;  /* spread to maximize collision variety */
-		tawc_sigshadow_blocked_set(tids[i], 1);
+		int tid = 100000 + i * 17;
+		test_int_eq(tawc_sigshadow_blocked_get(tid), tid & 1);
 	}
-	/* Clear half of them, alternating, to scatter tombstones through
-	 * probe chains. */
-	for (int i = 0; i < N; i += 2)
-		tawc_sigshadow_blocked_clear(tids[i]);
-	/* The other half must still be findable. */
-	for (int i = 1; i < N; i += 2)
-		test_int_eq(tawc_sigshadow_blocked_get(tids[i]), 1);
-	/* Cleared ones must read as 0. */
-	for (int i = 0; i < N; i += 2)
-		test_int_eq(tawc_sigshadow_blocked_get(tids[i]), 0);
+	tawc_sigshadow_blocked_reap(alive_none);
+	for (int i = 0; i < N; i++)
+		test_int_eq(tawc_sigshadow_blocked_get(100000 + i * 17), 0);
 }
 
 test(action_default_is_zero)

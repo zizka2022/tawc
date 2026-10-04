@@ -249,9 +249,7 @@ path must not pay proot's per-syscall stat walk.
   fchmodat/fchownat gating below — and every other trap avoids the
   identity seqlock read.
 - **Handlers that never return to the wrapper** must restore first.
-  `handle_exit` forwards `exit(2)`, so the wrapper skips the slot
-  claim for it entirely; execve/execveat call
-  `tawcroot_rescue_restore()` before `tawcroot_exec_handler_commit()`,
+  execve/execveat call `tawcroot_rescue_restore()` before `tawcroot_exec_handler_commit()`,
   which `execveat`s away. `--exec-child` then re-opens the guest
   binary (and its PT_INTERP / shebang interpreters) **by path** in a
   fresh process, outside any dispatch wrapper, so `loader_exec.c` uses

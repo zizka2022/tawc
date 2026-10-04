@@ -20,36 +20,28 @@
  * Set scans the same way: matching tid → update bit; tombstone →
  * remember and continue (reclaim if no match found); empty → only
  * CAS-claim if blocked=1 (or claim the remembered tombstone instead);
- * end-of-table → claim tombstone if any, else trap (table full of
- * distinct active tids).
+ * end-of-table → claim tombstone if any, else report the table full.
  *
- * Single-writer-per-tid invariant: tawc_sigshadow_blocked_set and
- * tawc_sigshadow_blocked_clear are only called by the trapping thread
- * for its own tid (set from handle_rt_sigprocmask, clear from
- * handle_exit) with SIGSYS masked (no SA_NODEFER). Two writers can
+ * Single-writer-per-tid invariant: tawc_sigshadow_blocked_set is only
+ * called by the trapping thread for its own tid (set from handle_rt_sigprocmask) with SIGSYS masked
+ * (no SA_NODEFER). blocked_reap is the exception: it tombstones other
+ * tids, but only dead ones, which have no writer left. Two writers can
  * never have the same tid in production, so the same-tid update path
  * needs no CAS — a plain atomic store is enough. Different-tid
  * concurrency is real and handled via the CAS-claim spin (for both
  * empty-slot and tombstone claims).
  *
- * Overflow handling: if N_SLOTS distinct tids hold blocked=1
- * simultaneously and a new tid wants to block, set() __builtin_trap()s
- * (SIGILL). Silently dropping the update would leave the guest with
- * a wrong shadow mask and no diagnostic; a hard crash points at the
- * exact line and tells us to bump N_SLOTS.
+ * Overflow handling: exit(2) isn't trapped (a thread may have
+ * unmapped its own stack by then, see syscalls_control.c), so slots of
+ * exited threads stay live — musl blocks every signal before exiting,
+ * so they hold blocked=1. When set() finds no room it returns -1; the
+ * caller reaps dead tids (blocked_reap) and retries. Still full means
+ * N_SLOTS live threads have SIGSYS blocked at once; the caller traps.
  *
- * TID-reuse race: closed by the exit-side hook. handle_exit calls
- * blocked_clear(gettid()) before forwarding the syscall, so a tid's
- * slot is tombstoned the moment its thread exits. A subsequent thread
- * reusing that tid hits no stale state (tombstones probe-skip, so
- * blocked_get returns the default 0). The only remaining gap is
- * involuntary thread death (thread killed by SIGKILL from another
- * thread, or by a fatal signal that bypasses exit(2)) — uncommon, and
- * the failure mode is the same one-shot wrong-mask read documented
- * before. Voluntary thread teardown via pthread_exit / thread-fn
- * return goes through exit(2). exit_group is not hooked: it kills
- * every thread and the OS reclaims everything, so per-slot cleanup
- * would be wasted work.
+ * TID reuse: a new thread that gets an exited thread's tid before the
+ * reap reads the stale bit until its first rt_sigprocmask. musl, glibc
+ * and Go all SIG_SETMASK at thread start, which overwrites it. A thread
+ * killed without exit(2) is the same case.
  *
  * Process-global sigaction — classic seqlock. Even sequence = stable,
  * odd = writer in progress. Writers CAS(seq, even, even+1) to claim,
@@ -157,9 +149,9 @@ static int try_claim_slot(unsigned k, int from, int tid, uint8_t v)
 	return 0;
 }
 
-void tawc_sigshadow_blocked_set(int tid, int blocked)
+int tawc_sigshadow_blocked_set(int tid, int blocked)
 {
-	if (tid <= 0) return;
+	if (tid <= 0) return 0;
 	uint8_t v = blocked ? 1 : 0;
 	unsigned start = slot_hash(tid);
 	int      tomb_seen = 0;
@@ -170,7 +162,7 @@ void tawc_sigshadow_blocked_set(int tid, int blocked)
 		if (slot_tid == tid) {
 			__atomic_store_n(&g_slots[k].blocked, v,
 					 __ATOMIC_RELAXED);
-			return;
+			return 0;
 		}
 		if (slot_tid == TOMBSTONE) {
 			if (!tomb_seen) { tomb_seen = 1; tomb_k = k; }
@@ -183,15 +175,15 @@ void tawc_sigshadow_blocked_set(int tid, int blocked)
 			 * never seen is a no-op. This caps slot pressure
 			 * at "threads currently with SIGSYS blocked",
 			 * not "threads that ever called sigprocmask". */
-			if (!blocked) return;
+			if (!blocked) return 0;
 			/* Prefer reclaiming a tombstone we already passed:
 			 * keeps the table densely packed and bounds the
 			 * cost of future probes through tombstone runs. */
 			if (tomb_seen &&
 			    try_claim_slot(tomb_k, TOMBSTONE, tid, v))
-				return;
+				return 0;
 			if (try_claim_slot(k, 0, tid, v))
-				return;
+				return 0;
 			/* Lost the CAS to a concurrent setter for a
 			 * different tid. Keep probing; if there's a
 			 * tombstone we noticed we'll fall back to it
@@ -202,56 +194,27 @@ void tawc_sigshadow_blocked_set(int tid, int blocked)
 	 * empty. If we passed a tombstone, reclaim it now. */
 	if (blocked && tomb_seen &&
 	    try_claim_slot(tomb_k, TOMBSTONE, tid, v))
-		return;
-	if (!blocked) return;
-	/* Table is full of distinct concurrently-blocked tids. With
-	 * blocked=0 sets no longer claiming slots and tombstones
-	 * reclaimed on overflow, hitting this means N_SLOTS guest
-	 * threads have SIGSYS *actively* blocked at the same time —
-	 * well outside any realistic workload. We don't silently drop
-	 * the update because that produces a wrong-mask read for the
-	 * affected thread with no signal to the user. __builtin_trap()
-	 * lands as SIGILL on the trapping thread, so the failure is
-	 * visible in logcat / a coredump pointing at this line; the
-	 * fix is bumping N_SLOTS or moving to a growable backing
-	 * store.
-	 *
-	 * Pedantic edge: we only remember the *first* tombstone we
-	 * passed (tomb_k). If that tomb was reclaimed by another writer
-	 * for a different tid before we finished our walk, and a later
-	 * tomb existed, we trap even though the table technically has
-	 * room. Requires N_SLOTS distinct concurrently-blocking tids
-	 * AND a multi-way tomb-claim race — well below "any realistic
-	 * workload" already. Tracking every passed tomb wouldn't make
-	 * a measurable difference. */
-	__builtin_trap();
+		return 0;
+	if (!blocked) return 0;
+	/* Full. Pedantic edge: only the *first* passed tombstone is
+	 * remembered, so a lost race for it reports full even if a later
+	 * tomb existed; the caller's reap + retry covers that too. */
+	return -1;
 }
 
-/* Single-writer-per-tid: only the dying thread itself clears its own
- * slot (handle_exit on the trapping thread). Concurrent readers / other-tid
- * writers are safe — tombstones probe-skip on get and are reclaim-targets
- * on set. We don't bother CAS-ing the tid swap: under the invariant nobody
- * else is touching this slot's tid value while we own it. */
-void tawc_sigshadow_blocked_clear(int tid)
+/* Tombstones every live slot whose tid `alive` rejects. A dead tid has
+ * no writer left, so the CAS only races a fork child's table or a tid
+ * reused between the check and the swap; the latter loses that new
+ * thread's bit until its next set (same as the TID-reuse case above). */
+void tawc_sigshadow_blocked_reap(int (*alive)(int tid))
 {
-	if (tid <= 0) return;
-	unsigned start = slot_hash(tid);
-	for (unsigned i = 0; i < N_SLOTS; i++) {
-		unsigned k = (start + i) % N_SLOTS;
+	for (unsigned k = 0; k < N_SLOTS; k++) {
 		int slot_tid = __atomic_load_n(&g_slots[k].tid, __ATOMIC_ACQUIRE);
-		if (slot_tid == tid) {
-			__atomic_store_n(&g_slots[k].blocked, 0,
-					 __ATOMIC_RELAXED);
-			__atomic_store_n(&g_slots[k].tid, TOMBSTONE,
-					 __ATOMIC_RELEASE);
-			return;
-		}
-		if (slot_tid == 0)
-			return;  /* not present */
-		/* tombstone: keep probing */
+		if (slot_tid <= 0 || alive(slot_tid)) continue;
+		__atomic_compare_exchange_n(&g_slots[k].tid, &slot_tid,
+					    TOMBSTONE, 0, __ATOMIC_ACQ_REL,
+					    __ATOMIC_RELAXED);
 	}
-	/* Walked the whole table without finding our tid — already
-	 * absent, nothing to do. */
 }
 
 /* ---------- process-global sigaction shadow ---------- */
