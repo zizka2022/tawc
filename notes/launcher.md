@@ -178,7 +178,8 @@ trampoline).
   publishing app; translucent DialogHost theme, `noHistory`,
   `excludeFromRecents`, `taskAffinity=""` so a tap doesn't yank the
   main TAWC task forward): gate install exists + state READY → scan →
-  find by id → `EntryLauncher.launch`. Any gate failure shows
+  `EntryResolver.resolve` (install exists + READY + method in this
+  build → scan → find by id) → `EntryLauncher.launch`. Any gate failure shows
   `LaunchErrorActivity` instead of crashing, which is the whole
   stale-pin story: uninstalling a distro leaves pins behind, and a
   stale tap gets a clear error. (Optional follow-up if that annoys:
@@ -196,6 +197,33 @@ trampoline).
   icon, which would make a pinned icon-less app look like TAWC itself. Geometry (`pinIconFit`) + id mapping are JVM-unit-tested
   (`EntryShortcutsTest`); pinning itself is a launcher-UI interaction,
   so end-to-end coverage is manual.
+
+## Launch API (other apps)
+
+Lets another app (e.g. a dock) list launcher entries and start one,
+with the same reference-not-command rule as pins.
+
+- **Permission** `me.phie.tawc.permission.LAUNCH_APPS`, dangerous:
+  the user grants it per app at runtime. TAWC defines it, so install
+  TAWC before the client (Android only grants permissions it knows).
+- **Inventory**: `AppsProvider`, authority `me.phie.tawc.apps`,
+  exported behind the permission. `installations` (id, label, state);
+  `installations/<id>/apps` (id, name, comment, terminal, hidden;
+  empty unless READY); `.../apps/<desktopId>/icon` via `openFile("r")`
+  — the PNG is decoded and re-encoded (≤192 px) into a pipe, so a
+  rootfs symlink can't expose other app-private files. Scans are
+  memoized 5 s per install so a screen of icons costs one scan.
+  Desktop ids go in as one encoded path segment (`Uri.Builder.appendPath`).
+- **Check**: `call("resolve", extras installId + desktopId)` →
+  `status` (`ok`, `no_install`, `not_ready`, `method_unavailable`,
+  `gone`), `message`, `name`. `call` checks the permission itself;
+  the provider attribute doesn't cover it.
+- **Launch**: start the exported alias `.launcher.LaunchApp` (action
+  `me.phie.tawc.action.LAUNCH_APP`, extras `installId`, `desktopId`,
+  `label`) → the pin trampoline. An Activity start, not a provider
+  call, so TAWC is in the foreground when it opens windows or a
+  terminal. Failures show TAWC's own error dialog.
+- Exec lines and host paths never leave the app.
 
 ## Icon resolution
 
