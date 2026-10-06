@@ -28,6 +28,15 @@
          the binds UI (AllFilesAccess.declared). -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
+    <!-- Other apps may list and launch launcher entries by id
+         (notes/launcher.md "Launch API"). Dangerous: the user grants it
+         per app at runtime. -->
+    <permission
+        android:name="me.phie.tawc.permission.LAUNCH_APPS"
+        android:label="@string/permission_launch_apps_label"
+        android:description="@string/permission_launch_apps_description"
+        android:protectionLevel="dangerous" />
+
     <!--
       extractNativeLibs="true": the rootless install method ships proot
       as jniLibs/<abi>/libproot.so and exec's it from nativeLibraryDir.
@@ -220,6 +229,26 @@
             android:noHistory="true"
             android:excludeFromRecents="true"
             android:taskAffinity="" />
+
+        <!-- The trampoline again, for other apps holding LAUNCH_APPS
+             (notes/launcher.md "Launch API"): ids in, no command. -->
+        <activity-alias
+            android:name=".launcher.LaunchApp"
+            android:targetActivity=".launcher.ShortcutLaunchActivity"
+            android:exported="true"
+            android:permission="me.phie.tawc.permission.LAUNCH_APPS">
+            <intent-filter>
+                <action android:name="me.phie.tawc.action.LAUNCH_APP" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Launcher inventory + icons for the same apps. -->
+        <provider
+            android:name=".launcher.AppsProvider"
+            android:authorities="me.phie.tawc.apps"
+            android:exported="true"
+            android:permission="me.phie.tawc.permission.LAUNCH_APPS" />
 
         <service
             android:name=".install.InstallationService"
