@@ -155,6 +155,8 @@
     <string name="shortcut_pin_unsupported">This launcher does not support pinned shortcuts.</string>
     <string name="shortcut_pin_updated">Updated the existing home-screen shortcut.</string>
     <string name="shortcut_install_not_ready">Installation is %1$s.</string>
+    <string name="permission_launch_apps_label">launch Linux apps in TAWC</string>
+    <string name="permission_launch_apps_description">List the apps installed in your TAWC distros and start them.</string>
     <string name="shortcut_entry_gone">This app is no longer installed in the distro.</string>
     <string name="shortcut_distro_uninstalled">The distro was uninstalled.</string>
     <string name="launcher_method_unavailable">Install method \'%1$s\' is not included in this build.</string>
