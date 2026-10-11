@@ -64,6 +64,7 @@
 #                                           driven by tawcroot/Makefile for incremental
 #                                           compilation — header deps via gcc -MMD -MP)
 #   tawcroot/build.sh --clean          # wipe build dirs first
+#   tawcroot/build.sh --no-stage       # build Android binary without copying into APK jniLibs
 #   tawcroot/build.sh --testhost       # also build tawcroot-testhost for non-host ABIs
 #                                        (used by tawcroot/test.sh --device)
 #   tawcroot/build.sh --tests          # also build the cleat-driven `tests`
@@ -127,6 +128,7 @@ ARCH_BASE_x86_64="0x40000000"
 # ---------------------------------------------------------------------------
 ABI=""
 CLEAN=0
+STAGE_ANDROID_PROD=1
 TESTHOST_FOR_NONHOST=0
 TESTS_FOR_NONHOST=0
 for arg in "$@"; do
@@ -138,6 +140,7 @@ for arg in "$@"; do
         --testhost)                TESTHOST_FOR_NONHOST=1 ;;
         --tests)                   TESTS_FOR_NONHOST=1 ;;
         --clean)                   CLEAN=1 ;;
+        --no-stage)                STAGE_ANDROID_PROD=0 ;;
         *) echo "ERROR: unknown arg: $arg" >&2; exit 1 ;;
     esac
 done
@@ -360,13 +363,13 @@ build_binary() {
 
     # Production Android ABIs ride along with the APK; testhost is never
     # packaged.
-    if [ "$kind" = "prod" ]; then
+    if [ "$kind" = "prod" ] && [ "$STAGE_ANDROID_PROD" = "1" ]; then
         case "$abi" in
             aarch64) mkdir -p "$JNILIBS_DIR/arm64-v8a"; cp -f "$out" "$JNILIBS_DIR/arm64-v8a/libtawcroot.so"; echo "    staged at jniLibs/arm64-v8a/libtawcroot.so" ;;
             x86_64)  mkdir -p "$JNILIBS_DIR/x86_64";    cp -f "$out" "$JNILIBS_DIR/x86_64/libtawcroot.so";    echo "    staged at jniLibs/x86_64/libtawcroot.so" ;;
         esac
     else
-        echo "    not packaged into APK ($out_name is testhost-only)"
+        echo "    not packaged into APK ($out_name: testhost or --no-stage)"
     fi
 }
 
@@ -554,11 +557,13 @@ case "$ABI" in
             x86_64|amd64) : ;;
             *) echo "ERROR: --abi=host only supports x86_64 hosts (got '$hostm')" >&2; exit 1 ;;
         esac
+        # Validate before dependency setup or cleaning an existing build.
+        host_jobs="${TAWCROOT_BUILD_JOBS:-$(nproc)}"
+        [[ "$host_jobs" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: TAWCROOT_BUILD_JOBS must be a positive integer" >&2; exit 1; }
         setup_cleat
         if [ "$CLEAN" = "1" ]; then make -C "$TAWCROOT_DIR" clean; fi
-        # -j without an arg uses unbounded parallelism; cap it to nproc so we
-        # don't OOM on large machines or thrash on small ones.
-        make -C "$TAWCROOT_DIR" -j"$(nproc)"
+        # Bound host compilation to nproc by default; CI uses two workers.
+        make -C "$TAWCROOT_DIR" -j"$host_jobs"
         echo "==> host outputs in $BUILD_ROOT/tawcroot-host/"
         ;;
 esac

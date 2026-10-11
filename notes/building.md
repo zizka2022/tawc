@@ -28,6 +28,84 @@ hand, use the matching script under `scripts/` or `tawcroot/build.sh`.
 The result is `app/build/outputs/apk/debug/app-debug.apk`. Install
 and launch as documented in AGENTS.md's Common Commands.
 
+## Opt-in CI diagnostics
+
+The existing `build-apk` workflow runs canonical baseline/trace comparisons on
+pushes to `pocket/tawcroot-sigsys-diagnostics`. Other pushes retain the ordinary
+APK build. The optional manual input is false by default; GitHub also requires
+the workflow on the default branch for dispatch, so it is not currently usable
+in this fork, whose workflow exists only on `feat/launch-api`. No default-branch
+change is needed for the dedicated-branch push route.
+
+The comparison uses clean host builds, tests every registered case via the
+canonical runner, and records failures/skips in logs. Baseline has diagnostics
+off; trace uses `TAWCROOT_TRACE_ENTER=1` in production, testhost and hosted test
+objects, with a compiled-marker fidelity check. Trace records contain only
+process/thread IDs, syscall number, signal code/architecture and success or
+errno; argument values, successful returns, addresses and buffers are omitted.
+Cleat/STC is freshly checked out through its exact `deps/deps.list` pin before
+signing-key restoration.
+The workflow uses `contents: read` and checkout does not retain credentials.
+Canonical tests use a fresh HOME and a small environment allowlist, without
+signing material or inherited CI tokens. Signing restoration disables shell
+tracing and uses private file permissions; an always-run cleanup removes the
+restored keystore before the standalone trace build.
+
+Every artifact upload requires a successful privacy gate. Gradle build/tests
+and signing-check output are captured before publication. The gate requires
+both the current commit author and committer to be the neutral project
+identity. It does not consult old personal metadata, publish a personal
+identity denylist/hash, or require a new secret/private configuration.
+
+`scripts/ci/check-public-artifacts.py host|apk|arm64` checks exact file
+allowlists, credential patterns, email addresses, non-neutral author/name
+metadata and personal host paths, including nested ZIP/TAR members and
+archive metadata. Required public vendor attributions and SDK reference
+strings have exact complete-file SHA-256 exceptions for the reviewed bytes;
+these are not identity hashes. Changed bytes lose that exception. Credential,
+profile, secret-pattern and host-path checks still apply to those files.
+Credential/profile members are refused by filename before opening payloads.
+Unsupported archives, unexpected files, symlinks and budget failures block
+upload. Errors expose only fixed categories, never matching values or paths.
+
+Approved bytes are copied into private snapshots under
+`build/public-artifacts/`; uploads use only the gate's exact snapshot paths
+and an `approved-files.json` hash manifest. Later changes to original files
+cannot alter that snapshot. Each gate has a 3-minute step boundary;
+inspection is capped at 128 MiB per file, 512 MiB total, 20,000 members and
+four archive nesting levels.
+
+Host artifacts contain baseline/trace logs/results; ARM64 artifacts contain
+the standalone binary, build log and manifest. Both expire after 7 days.
+The APK artifact contains exactly one APK, checksum, captured build/test/
+signing-check logs and the approval manifest, retained for 30 days. The
+original signing/checksum gate must succeed before APK privacy approval.
+
+The scan is heuristic: arbitrary unlabelled names, unknown encodings and
+secrets can escape its patterns. It is not an exact-name guarantee. New
+attribution bytes require review if blocked. GitHub account/repository
+metadata, cached history, public signing certificates and required vendor
+attributions remain visible. Setup/action output is public CI output;
+build/test output is gated. No device deployment runs in CI.
+
+`scripts/ci/tawcroot-diagnostics.sh host-tests|arm64-artifact` requires the
+recognized CI workspace and existing Debian trixie packages, pinned Cleat/STC
+and NDK 27.2.12479018. No new build dependencies are added.
+`TAWCROOT_BUILD_JOBS` limits host compilation (default `nproc`, CI uses 2).
+`tawcroot/build.sh --no-stage` skips copying the Android production binary
+into APK `jniLibs`, and the script verifies the JNI input hash is unchanged.
+Each build/test command has a 10-minute boundary and 15-second kill grace;
+process CPU is capped at 600 seconds, core dumps disabled. The dedicated run
+has a 75-minute job bound. Host ASan uses the remote runner memory envelope;
+phone guards remain unchanged. Ordinary jobs keep their existing 240-minute
+bound. No new signing material is requested.
+
+The standalone binary is not an APK or a verified app-domain launch route.
+Inspect canonical results, including skips, and establish staging/rollback
+before phone approval. APK installation can close TAWC and personal guest
+sessions; it is separate from CI authorization. The recovered version-3 APK
+is a recovery candidate until its identity matches the installed app.
+
 ## Host packages
 
 ### Always required
@@ -162,11 +240,11 @@ Gradle needs an Android SDK location. Set one of:
 - `ANDROID_HOME=/path/to/Android/Sdk`
 - `ANDROID_SDK_ROOT=/path/to/Android/Sdk`
 
-`local.properties` is gitignored because the path is host-specific. On this
-dev machine it is:
+`local.properties` is gitignored because the path is host-specific. Use the
+SDK location on your build host, for example:
 
 ```properties
-sdk.dir=/home/ai/Android/Sdk
+sdk.dir=/path/to/Android/Sdk
 ```
 
 ```bash

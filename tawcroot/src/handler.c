@@ -80,6 +80,43 @@ static volatile tawcroot_handler_obs g_obs;
 # define SYS_SECCOMP 1
 #endif
 
+#ifdef TAWCROOT_TRACE_ENTER
+/* Diagnostic-only paired records. No guest pointers/buffers, shared mutable
+ * state, allocations or stdio. The extra raw syscalls and logging can change
+ * timing; validate with hosted tests before any isolated device deployment. */
+static void trace_dispatch(const char *phase, const tawcroot_syscall_args *args,
+			   const siginfo_t *info, long rv)
+{
+	char line[192];
+	size_t li = 0;
+	long pid = TAWC_RAW(TAWC_SYS_getpid, 0, 0, 0, 0, 0, 0);
+	long tid = TAWC_RAW(TAWC_SYS_gettid, 0, 0, 0, 0, 0, 0);
+	(void)tawc_str_append(line, sizeof line, &li, "[te] ");
+	(void)tawc_str_append(line, sizeof line, &li, phase);
+	(void)tawc_str_append(line, sizeof line, &li, " pid=");
+	(void)tawc_str_append_dec(line, sizeof line, &li, pid);
+	(void)tawc_str_append(line, sizeof line, &li, " tid=");
+	(void)tawc_str_append_dec(line, sizeof line, &li, tid);
+	(void)tawc_str_append(line, sizeof line, &li, " nr=");
+	(void)tawc_str_append_dec(line, sizeof line, &li, args->nr);
+	(void)tawc_str_append(line, sizeof line, &li, " code=");
+	(void)tawc_str_append_dec(line, sizeof line, &li, info->si_code);
+	(void)tawc_str_append(line, sizeof line, &li, " arch=");
+	(void)tawc_str_append_dec(line, sizeof line, &li, (long)(uint32_t)info->si_arch);
+	if (phase[0] == 'r') {
+		/* Successful returns can be guest addresses or data: log only status. */
+		if (rv < 0 && rv >= -4095) {
+			(void)tawc_str_append(line, sizeof line, &li, " errno=");
+			(void)tawc_str_append_dec(line, sizeof line, &li, -rv);
+		} else {
+			(void)tawc_str_append(line, sizeof line, &li, " result=ok");
+		}
+	}
+	(void)tawc_str_append(line, sizeof line, &li, "\n");
+	(void)TAWC_RAW(TAWC_SYS_write, 2, (long)line, (long)li, 0, 0, 0);
+}
+#endif
+
 static void sigsys_handler(int sig, siginfo_t *info, void *ucontext)
 {
 	(void)sig;
@@ -133,7 +170,13 @@ static void sigsys_handler(int sig, siginfo_t *info, void *ucontext)
 	 * rescue wrapper (rescue.h), which owns the lazy DAC-override
 	 * retry; on everything but an -EACCES at virtual root it is a
 	 * plain table lookup plus a slot claim. */
+#ifdef TAWCROOT_TRACE_ENTER
+	trace_dispatch("enter", &args, info, 0);
+#endif
 	long rv = tawcroot_dispatch_call(&args, uc);
+#ifdef TAWCROOT_TRACE_ENTER
+	trace_dispatch("return", &args, info, rv);
+#endif
 #ifdef TAWCROOT_TRACE
 	{
 		/* Build the trace line into a stack buffer and emit in one

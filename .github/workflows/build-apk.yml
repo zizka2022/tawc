@@ -6,11 +6,20 @@ name: build-apk
 on:
   push:
   workflow_dispatch:
+    inputs:
+      tawcroot_diagnostics:
+        description: Run canonical baseline/trace tests and upload an unpackaged ARM64 trace binary
+        type: boolean
+        default: false
+        required: false
+
+permissions:
+  contents: read
 
 jobs:
   debug-apk:
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/pocket/tawcroot-sigsys-diagnostics') || (github.event_name == 'workflow_dispatch' && inputs.tawcroot_diagnostics)) && 75 || 240 }}
     container:
       image: debian:trixie
       # The runner's own preinstalled SDKs are unused here; mounted only so they can be deleted
@@ -53,6 +62,8 @@ jobs:
             linux-libc-dev-arm64-cross
 
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Mark checkout safe for git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -91,10 +102,32 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           command -v cargo-ndk || cargo install cargo-ndk --version 4.1.2 --locked
 
+      - name: Canonical tawcroot regressions (opt-in diagnostics)
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/pocket/tawcroot-sigsys-diagnostics') || (github.event_name == 'workflow_dispatch' && inputs.tawcroot_diagnostics)
+        timeout-minutes: 45
+        run: bash scripts/ci/tawcroot-diagnostics.sh host-tests
+
+      - name: Gate canonical regression evidence
+        id: host_privacy
+        if: always() && ((github.event_name == 'push' && github.ref == 'refs/heads/pocket/tawcroot-sigsys-diagnostics') || (github.event_name == 'workflow_dispatch' && inputs.tawcroot_diagnostics))
+        timeout-minutes: 3
+        run: python3 scripts/ci/check-public-artifacts.py host
+
+      - name: Upload canonical regression evidence
+        if: always() && steps.host_privacy.conclusion == 'success' && steps.host_privacy.outputs.approved == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tawcroot-host-regressions-${{ github.sha }}
+          path: ${{ steps.host_privacy.outputs.paths }}
+          retention-days: 7
+
       - name: Debug signing key
         env:
           DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
         run: |
+          # Keep signing material out of shell tracing and readable only by this job.
+          set +x
+          umask 077
           # A fixed key lets successive builds install over each other without
           # uninstalling (which would delete the installed distros).
           # The container runs as root with HOME=/github/home, but Java's user.home
@@ -103,7 +136,8 @@ jobs:
           if [ -n "$DEBUG_KEYSTORE_B64" ]; then
             for d in "$HOME/.android" /root/.android; do
               mkdir -p "$d"
-              echo "$DEBUG_KEYSTORE_B64" | base64 -d > "$d/debug.keystore"
+              printf '%s' "$DEBUG_KEYSTORE_B64" | base64 -d > "$d/debug.keystore"
+              chmod 600 "$d/debug.keystore"
             done
             echo "ANDROID_USER_HOME=$HOME/.android" >> "$GITHUB_ENV"
           else
@@ -112,11 +146,14 @@ jobs:
 
       - name: Build debug APK
         run: |
+          mkdir -p build/pocket-tawcroot-diagnostics/apk
+          ulimit -c 0
           export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
           ./gradlew --no-daemon --stacktrace assembleDebug \
             -PtawcAbis=arm64-v8a -PtawcXwayland=true \
             -PtawcGraphics=libhybris,cpu -PtawcMethods=tawcroot \
-            -PtawcBootstrapPackages=false
+            -PtawcBootstrapPackages=false \
+            > build/pocket-tawcroot-diagnostics/apk/build.log 2>&1
 
       # Saved right after a good build, so a later step failing doesn't lose it.
       - name: Save cargo, gradle and vendored deps
@@ -134,28 +171,26 @@ jobs:
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Checksum
+        id: checksum
         run: |
-          cd app/build/outputs/apk/debug
-          mv app-debug.apk "tawc-debug-${GITHUB_SHA::7}.apk"
-          sha256sum *.apk | tee SHA256SUMS
-          signer=$("$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs *.apk \
-            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-          echo "signer: $signer"
-          if [ -n "$DEBUG_CERT_SHA256" ] && [ "$signer" != "$DEBUG_CERT_SHA256" ]; then
-            echo "::error::APK signed with $signer, expected $DEBUG_CERT_SHA256"
-            exit 1
-          fi
-          df -h /
+          mkdir -p "$GITHUB_WORKSPACE/build/pocket-tawcroot-diagnostics/apk"
+          {
+            cd app/build/outputs/apk/debug
+            apk="tawc-debug-${GITHUB_SHA::7}.apk"
+            mv app-debug.apk "$apk"
+            sha256sum "$apk" | tee SHA256SUMS
+            echo "TAWC_APK=$apk" >> "$GITHUB_ENV"
+            signer=$("$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" \
+              | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+            echo "signer: $signer"
+            if [ -n "$DEBUG_CERT_SHA256" ] && [ "$signer" != "$DEBUG_CERT_SHA256" ]; then
+              echo "::error::APK signed with $signer, expected $DEBUG_CERT_SHA256"
+              exit 1
+            fi
+            df -h /
+          } > "$GITHUB_WORKSPACE/build/pocket-tawcroot-diagnostics/apk/signing-check.log" 2>&1
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: tawc-debug-${{ github.sha }}
-          path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/debug/SHA256SUMS
-          retention-days: 30
-
-      # After the upload, so a test failure still leaves the APK.
+      # Captured test failures do not publish raw output; the gate can still approve the APK.
       - name: Unit tests (fork changes)
         run: |
           export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
@@ -163,4 +198,45 @@ jobs:
             --tests 'me.phie.tawc.install.RootfsAutostartTest' \
             -PtawcAbis=arm64-v8a -PtawcXwayland=true \
             -PtawcGraphics=libhybris,cpu -PtawcMethods=tawcroot \
-            -PtawcBootstrapPackages=false
+            -PtawcBootstrapPackages=false \
+            > build/pocket-tawcroot-diagnostics/apk/unit-tests.log 2>&1
+
+      - name: Remove restored signing material
+        if: always()
+        run: |
+          set +x
+          rm -f "$HOME/.android/debug.keystore" /root/.android/debug.keystore
+
+      - name: Gate APK and captured build evidence
+        id: apk_privacy
+        if: always() && steps.checksum.conclusion == 'success'
+        timeout-minutes: 3
+        run: python3 scripts/ci/check-public-artifacts.py apk
+
+      - name: Upload approved APK and build evidence
+        if: always() && steps.apk_privacy.conclusion == 'success' && steps.apk_privacy.outputs.approved == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tawc-debug-${{ github.sha }}
+          path: ${{ steps.apk_privacy.outputs.paths }}
+          retention-days: 30
+
+      # Built after the ordinary APK is uploaded; --no-stage leaves its JNI input unchanged.
+      - name: Build standalone trace runtime (opt-in diagnostics)
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/pocket/tawcroot-sigsys-diagnostics') || (github.event_name == 'workflow_dispatch' && inputs.tawcroot_diagnostics)
+        timeout-minutes: 12
+        run: bash scripts/ci/tawcroot-diagnostics.sh arm64-artifact
+
+      - name: Gate standalone diagnostic evidence
+        id: arm64_privacy
+        if: always() && ((github.event_name == 'push' && github.ref == 'refs/heads/pocket/tawcroot-sigsys-diagnostics') || (github.event_name == 'workflow_dispatch' && inputs.tawcroot_diagnostics))
+        timeout-minutes: 3
+        run: python3 scripts/ci/check-public-artifacts.py arm64
+
+      - name: Upload standalone diagnostic evidence
+        if: always() && steps.arm64_privacy.conclusion == 'success' && steps.arm64_privacy.outputs.approved == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tawcroot-arm64-trace-${{ github.sha }}
+          path: ${{ steps.arm64_privacy.outputs.paths }}
+          retention-days: 7

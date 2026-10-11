@@ -126,7 +126,7 @@ TESTS_CFLAGS := \
     $(PROGRAMS_DEFINES) \
     -DTAWCROOT_ANDROID_FILTER_WRAP=\"$(OUT)/androidfilter/wrap\" \
     -DTAWCROOT_TEST_TMPDIR=\"/tmp\" \
-    -MMD -MP
+    -MMD -MP $(EXTRA_CFLAGS)
 
 TESTS_LDFLAGS := $(TESTS_SANFLAGS) -lm -pthread
 
