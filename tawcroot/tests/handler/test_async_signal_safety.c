@@ -90,6 +90,12 @@ static const char *const handler_objs[] = {
 	 * external symbols today), but keeping it on the list catches a
 	 * future regression that pulls in libc. */
 	"proc_rewrite.c.o",
+#ifdef TAWCROOT_TRACE_ENTER
+	/* Trace formatting reaches these bounded, stack-only string helpers.
+	 * Audit their object too, so the pinned imports below cannot hide a
+	 * transitive allocation/stdio dependency. */
+	"strings.c.o",
+#endif
 };
 
 /* Run `nm -u --format=just-symbols <obj>` and capture its stdout.
@@ -214,6 +220,14 @@ test(handler_c_pinned_import_list)
 		 * on the way to exit_group. */
 		"tawc_io_str",
 		"tawc_io_dec",
+#ifdef TAWCROOT_TRACE_ENTER
+		/* Opt-in trace formatting (strings.c): bounded byte copies and
+		 * integer arithmetic with a 24-byte stack buffer, no libc or
+		 * mutable state. LONG_MIN is handled in unsigned arithmetic.
+		 * strings.c.o is included in the banned-symbol audit above. */
+		"tawc_str_append",
+		"tawc_str_append_dec",
+#endif
 		/* exit_group for the non-seccomp SIGSYS abort (raw_sys.h
 		 * static inline on most builds; listed for -O0/odd builds). */
 		"tawc_exit_group",
