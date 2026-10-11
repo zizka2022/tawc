@@ -110,7 +110,7 @@ test(blocked_reap_frees_dead_tids)
 	tawc_sigshadow_blocked_reap(alive_odd);
 	for (unsigned i = 0; i < cap; i++) {
 		int tid = (int)(2 + i * 1009);
-		test_int_eq(tawc_sigshadow_blocked_get(tid), tid & 1);
+		test_int_eq(tawc_sigshadow_blocked_get(tid), (tid & 1));
 	}
 	test_int_eq(tawc_sigshadow_blocked_set(0x7fffffff, 1), 0);
 	test_int_eq(tawc_sigshadow_blocked_get(0x7fffffff), 1);
@@ -126,7 +126,7 @@ test(blocked_reap_tombstones_keep_probe_chain)
 	tawc_sigshadow_blocked_reap(alive_odd);
 	for (int i = 0; i < N; i++) {
 		int tid = 100000 + i * 17;
-		test_int_eq(tawc_sigshadow_blocked_get(tid), tid & 1);
+		test_int_eq(tawc_sigshadow_blocked_get(tid), (tid & 1));
 	}
 	tawc_sigshadow_blocked_reap(alive_none);
 	for (int i = 0; i < N; i++)

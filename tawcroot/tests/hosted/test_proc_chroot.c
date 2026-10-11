@@ -819,12 +819,52 @@ test(hosted_proc_other_pid_root_contained)
 	th_setup(&v, "proc-otherroot");
 	test_int_eq(tawcroot_path_add_bind("/proc", "/proc", 0), 0);
 
+	int ready[2], release[2];
+	int ready_ok = pipe(ready);
+	test_int_eq(ready_ok, 0);
+	if (ready_ok < 0) { th_teardown(&v); return; }
+	int release_ok = pipe(release);
+	test_int_eq(release_ok, 0);
+	if (release_ok < 0) {
+		close(ready[0]); close(ready[1]);
+		th_teardown(&v); return;
+	}
 	pid_t child = fork();
 	test_true(child >= 0);
+	if (child < 0) {
+		close(ready[0]); close(ready[1]);
+		close(release[0]); close(release[1]);
+		th_teardown(&v); return;
+	}
 	if (child == 0) {
+		close(ready[0]); close(release[1]);
+		char token;
+		if (write(ready[1], "r", 1) != 1 ||
+		    read(release[0], &token, 1) != 1 ||
+		    close(tawcroot_rootfs_fd) != 0 ||
+		    write(ready[1], "c", 1) != 1) _exit(1);
+		close(ready[1]); close(release[0]);
 		pause();
 		_exit(0);
 	}
+	close(ready[1]); close(release[0]);
+	char token = 0;
+	test_int_eq(read(ready[0], &token, 1), 1);
+	test_int_eq(token, 'r');
+	char root_suffix[64];
+	snprintf(root_suffix, sizeof root_suffix, "%d/root", (int)child);
+	int kind = TAWCROOT_PROC_MAGIC_NONE;
+	test_true(tawcroot_proc_magic_link_classify(root_suffix, &kind) > 0);
+	/* fork inherits the root marker: this is initially a sibling guest. */
+	test_int_eq(kind, TAWCROOT_PROC_MAGIC_ROOT_OWN);
+	test_int_eq(write(release[1], "c", 1), 1);
+	close(release[1]);
+	test_int_eq(read(ready[0], &token, 1), 1);
+	test_int_eq(token, 'c');
+	close(ready[0]);
+	test_true(tawcroot_proc_magic_link_classify(root_suffix, &kind) > 0);
+	/* Only after closing that marker is the child genuinely foreign. */
+	test_int_eq(kind, TAWCROOT_PROC_MAGIC_CONTAIN);
 
 	/* The child's root is the HOST root, and it is not ours, so the
 	 * link is resolved and contained rather than rewritten. Naming a
@@ -847,7 +887,12 @@ test(hosted_proc_other_pid_root_contained)
 		 v.root);
 	long alias = th_sys(TAWC_SYS_openat, AT_FDCWD, esc, O_RDONLY, 0, 0, 0);
 	test_true(alias >= 0);
-	test_int_eq(close((int)alias), 0);
+	if (alias >= 0) {
+		char content[32] = {0};
+		test_int_eq(read((int)alias, content, sizeof content - 1), 12);
+		test_str_eq(content, "from-rootfs\n");
+		test_int_eq(close((int)alias), 0);
+	}
 
 	/* Reading the bare link is unchanged — cross-process /proc stays
 	 * kernel-verbatim (notes/tawcroot/status.md "Known gaps"). */
