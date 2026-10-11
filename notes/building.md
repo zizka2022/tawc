@@ -43,6 +43,15 @@ off; trace uses `TAWCROOT_TRACE_ENTER=1` in production, testhost and hosted test
 objects, with a compiled-marker fidelity check. Trace records contain only
 process/thread IDs, syscall number, signal code/architecture and success or
 errno; argument values, successful returns, addresses and buffers are omitted.
+Records are emitted only when stderr is a regular file or already has
+`O_NONBLOCK`. Blocking pipes/sockets and sink-check errors drop records, so
+Cleat's wait-before-drain capture cannot deadlock on trace output. The handler
+does not change descriptor flags, retry writes, or allocate a new sink;
+nonblocking write failures/partial writes are dropped. Regular files can still
+wait for storage I/O. A canonical handler fixture redirects the real testhost's
+stderr to a private, immediately unlinked regular file and checks paired trace
+records and their exact metadata-only format; the baseline checks their absence.
+An eventual app-domain diagnostic launch must supply a suitable private sink.
 Cleat/STC is freshly checked out through its exact `deps/deps.list` pin before
 signing-key restoration.
 The workflow uses `contents: read` and checkout does not retain credentials.

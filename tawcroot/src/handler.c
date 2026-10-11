@@ -81,12 +81,15 @@ static volatile tawcroot_handler_obs g_obs;
 #endif
 
 #ifdef TAWCROOT_TRACE_ENTER
+#include "trace_sink.h"
 /* Diagnostic-only paired records. No guest pointers/buffers, shared mutable
  * state, allocations or stdio. The extra raw syscalls and logging can change
  * timing; validate with hosted tests before any isolated device deployment. */
 static void trace_dispatch(const char *phase, const tawcroot_syscall_args *args,
 			   const siginfo_t *info, long rv)
 {
+	/* Do not fill an undrained blocking stream with diagnostic records. */
+	if (!tawcroot_trace_sink_ready(2)) return;
 	char line[192];
 	size_t li = 0;
 	long pid = TAWC_RAW(TAWC_SYS_getpid, 0, 0, 0, 0, 0, 0);
