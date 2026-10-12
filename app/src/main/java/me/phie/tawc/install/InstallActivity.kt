@@ -128,9 +128,10 @@ class InstallActivity : AppCompatActivity() {
         useCacheProxy = when {
             savedInstanceState?.containsKey(KEY_USE_PROXY) == true ->
                 savedInstanceState.getBoolean(KEY_USE_PROXY)
-            // Dev build default: on. Production: off (and the row is
-            // hidden anyway, see buildCacheProxyRow).
-            me.phie.tawc.BuildConfig.DEBUG -> true
+            // Off by default, also in dev builds: the proxy is cleartext
+            // HTTP to 127.0.0.1:8080, which any app on the device could be
+            // listening on, and it also carries the digest lookups for
+            // Debian/Manjaro/Void. Dev builds still show the row to opt in.
             else -> false
         }
         andoEnabled = savedInstanceState?.getBoolean(KEY_ANDO) == true
