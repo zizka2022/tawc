@@ -25,7 +25,8 @@ final class PrivateFiles {
         return hash(file, maxBytes, deadline, () -> false);
     }
     static String hash(File file, long maxBytes, long deadline, BooleanSupplier cancelled) throws Exception {
-        if (cancelled.getAsBoolean()) throw new IOException("cancelled");
+        if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
+            throw new ProbeReport.Failure(ProbeReport.Category.CANCELLED);
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         long total = 0;
         byte[] bytes = new byte[65536];
@@ -33,15 +34,17 @@ final class PrivateFiles {
             int size;
             while ((size = input.read(bytes)) != -1) {
                 total += size;
-                if (total > maxBytes || System.nanoTime() > deadline || cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
-                    throw new IOException("hash_budget");
+                if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
+                    throw new ProbeReport.Failure(ProbeReport.Category.CANCELLED);
+                if (total > maxBytes) throw new ProbeReport.Failure(ProbeReport.Category.BUDGET);
+                if (System.nanoTime() > deadline) throw new ProbeReport.Failure(ProbeReport.Category.DEADLINE);
                 digest.update(bytes, 0, size);
             }
         }
         return hex(digest.digest());
     }
     static String read(File file, long cap) throws IOException {
-        if (file.length() > cap) throw new IOException("log_budget");
+        if (file.length() > cap) throw new ProbeReport.Failure(ProbeReport.Category.BUDGET);
         try (FileInputStream input = new FileInputStream(file)) {
             byte[] bytes = bytes(input, cap);
             return new String(bytes, StandardCharsets.UTF_8);
@@ -52,10 +55,19 @@ final class PrivateFiles {
         byte[] buffer = new byte[8192];
         int size;
         while ((size = input.read(buffer)) != -1) {
-            if (output.size() + size > cap) throw new IOException("read_budget");
+            if (output.size() + size > cap) throw new ProbeReport.Failure(ProbeReport.Category.BUDGET);
             output.write(buffer, 0, size);
         }
         return output.toByteArray();
+    }
+    static int pendingRuns(File parent) {
+        if (Files.isSymbolicLink(parent.toPath())) return -1;
+        if (!parent.exists()) return 0;
+        if (!parent.isDirectory()) return -1;
+        File[] runs = parent.listFiles();
+        if (runs == null || runs.length > 16) return -1;
+        for (File run : runs) if (Files.isSymbolicLink(run.toPath())) return -1;
+        return runs.length;
     }
     static void removeRun(File parent, File directory) throws IOException {
         // Paths are generated privately; do not follow symlinks during cleanup.

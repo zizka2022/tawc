@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.system.Os;
+import android.system.ErrnoException;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -52,7 +53,13 @@ public final class ProbeActivity extends Activity {
         run.setOnClickListener(view -> task(true)); content.addView(run);
         Button cancel = new Button(this); cancel.setText("Stop this test");
         cancel.setOnClickListener(view -> stop()); content.addView(cancel);
-        result = new TextView(this); result.setText("No runtime activated. Installation/launch needs separate approval.");
+        result = new TextView(this);
+        int pending = PrivateFiles.pendingRuns(new File(getFilesDir(), "probe-runs"));
+        long installedVersion = -1;
+        try { installedVersion = getPackageManager().getPackageInfo(getPackageName(), 0).getLongVersionCode(); }
+        catch (Exception ignored) { }
+        result.setText("probe_version=" + installedVersion + " pending_runs=" + pending +
+            " previous_cleanup=unverified\nNo runtime activated. Installation/launch needs separate approval.");
         result.setTextIsSelectable(true); content.addView(result);
         ScrollView scroll = new ScrollView(this); scroll.addView(content); setContentView(scroll);
     }
@@ -63,7 +70,10 @@ public final class ProbeActivity extends Activity {
         worker.execute(() -> {
             String summary;
             try { summary = fixture ? runFixture() : PackageMetadata.read(this, () -> cancelled); }
-            catch (Exception ignored) { summary = "Unavailable or check failed. No fallback or permission change."; }
+            catch (Exception error) {
+                ProbeReport report = new ProbeReport(); report.stage = ProbeReport.Stage.METADATA;
+                report.fail(error, numericErrno(error)); summary = report.render();
+            }
             String displayed = summary;
             runOnUiThread(() -> {
                 busy = false;
@@ -80,95 +90,150 @@ public final class ProbeActivity extends Activity {
     @Override protected void onDestroy() { stop(); worker.shutdownNow(); super.onDestroy(); }
 
     private void powerCheck() throws IOException {
-        if (cancelled) throw new IOException("cancelled");
+        if (cancelled) throw new ProbeReport.Failure(ProbeReport.Category.CANCELLED);
         Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
         PowerManager power = (PowerManager)getSystemService(POWER_SERVICE);
-        if (battery == null || power == null) throw new IOException("power_unavailable");
+        if (battery == null || power == null) throw new ProbeReport.Failure(ProbeReport.Category.POWER);
         int level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
         int scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
         int percent = scale > 0 && level >= 0 ? level * 100 / scale : -1;
         if (!ProbeProtocol.powerSafe(percent, battery.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0),
             battery.getIntExtra(BatteryManager.EXTRA_STATUS, -1), battery.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 1000),
-            power.getCurrentThermalStatus())) throw new IOException("power_gate");
+            power.getCurrentThermalStatus())) throw new ProbeReport.Failure(ProbeReport.Category.POWER);
     }
     private JSONObject provenance() throws Exception {
         try (InputStream input = getAssets().open("provenance.json")) {
             JSONObject data = new JSONObject(new String(PrivateFiles.bytes(input, 16384), StandardCharsets.UTF_8));
             if (!data.getString("runtime_source_commit").equals(ProbeProtocol.RUNTIME_SOURCE) ||
                 !data.getString("baseline_sha256").equals(ProbeProtocol.BASELINE) ||
-                !data.getString("trace_sha256").equals(ProbeProtocol.TRACE)) throw new IOException("provenance");
+                !data.getString("trace_sha256").equals(ProbeProtocol.TRACE)) throw new ProbeReport.Failure(ProbeReport.Category.PROVENANCE);
             for (String name : new String[]{"libpocket_baseline.so", "libpocket_trace.so", "libpocket_runner.so"}) {
                 String field = name.equals("libpocket_baseline.so") ? "baseline_sha256" :
                     name.equals("libpocket_trace.so") ? "trace_sha256" : "runner_sha256";
                 if (!PrivateFiles.hash(new File(getApplicationInfo().nativeLibraryDir, name), 2*1024*1024)
-                    .equals(data.getString(field))) throw new IOException("provenance");
+                    .equals(data.getString(field))) throw new ProbeReport.Failure(ProbeReport.Category.PROVENANCE);
             }
             return data;
         }
     }
-    private String runFixture() throws Exception {
-        powerCheck(); JSONObject data = provenance();
-        File parent = new File(getFilesDir(), "probe-runs");
-        if (!parent.exists() && !parent.mkdir()) throw new IOException("private_directory");
-        Os.chmod(parent.getPath(), 0700);
-        File[] previous = parent.listFiles();
-        if (previous == null || previous.length != 0) return "Earlier cleanup is unverified; no new test started. Remove only this test app to recover.";
-        File directory = Files.createTempDirectory(parent.toPath(), "run-").toFile();
-        Os.chmod(directory.getPath(), 0700);
-        boolean cleanup = true;
+    private static int numericErrno(Exception error) {
+        Throwable cause = error;
+        for (int depth = 0; cause != null && depth < 4; depth++, cause = cause.getCause()) {
+            if (cause instanceof ErrnoException) {
+                int value = ((ErrnoException)cause).errno;
+                return value >= 1 && value <= 4095 ? value : 0;
+            }
+        }
+        return 0; // No parsing of exception strings, paths or command lines.
+    }
+    private String runFixture() {
+        ProbeReport report = new ProbeReport();
+        File parent = new File(getFilesDir(), "probe-runs"), directory = null;
+        StringBuilder summary = new StringBuilder();
         try {
+            report.stage = ProbeReport.Stage.POWER; powerCheck();
+            report.stage = ProbeReport.Stage.PROVENANCE; JSONObject data = provenance();
+            report.stage = ProbeReport.Stage.RUN_DIRECTORY;
+            if (!parent.exists() && !parent.mkdir()) throw new ProbeReport.Failure(ProbeReport.Category.FILES);
+            Os.chmod(parent.getPath(), 0700);
+            int previous = PrivateFiles.pendingRuns(parent);
+            if (previous != 0) {
+                report.stage = ProbeReport.Stage.PRIOR_RUNS;
+                report.files = previous < 0 ? ProbeReport.FilesState.UNKNOWN : ProbeReport.FilesState.RETAINED;
+                report.child = ProbeReport.Child.UNKNOWN; report.group = ProbeReport.Group.UNVERIFIED;
+                throw new ProbeReport.Failure(ProbeReport.Category.FILES);
+            }
+            directory = Files.createTempDirectory(parent.toPath(), "run-").toFile();
+            report.files = ProbeReport.FilesState.RETAINED;
+            Os.chmod(directory.getPath(), 0700); // Inside the protected cleanup scope.
             File root = new File(directory, "rootfs");
-            if (!root.mkdir()) throw new IOException("private_directory");
+            if (!root.mkdir()) throw new ProbeReport.Failure(ProbeReport.Category.FILES);
             Os.chmod(root.getPath(), 0700);
+            report.stage = ProbeReport.Stage.FIXTURE;
             File program = new File(root, "probe");
             try (InputStream input = getAssets().open("probe-fixture"); FileOutputStream output = new FileOutputStream(program)) {
-                byte[] bytes = PrivateFiles.bytes(input, 65536);
-                output.write(bytes);
+                output.write(PrivateFiles.bytes(input, 65536));
             }
             Os.chmod(program.getPath(), 0700);
-            if (!PrivateFiles.hash(program, 65536).equals(data.getString("fixture_sha256"))) throw new IOException("provenance");
+            if (!PrivateFiles.hash(program, 65536).equals(data.getString("fixture_sha256")))
+                throw new ProbeReport.Failure(ProbeReport.Category.PROVENANCE);
+            report.stage = ProbeReport.Stage.MARKER;
             File marker = new File(root, "marker");
             try (FileOutputStream output = new FileOutputStream(marker)) { output.write("probe marker\n".getBytes(StandardCharsets.UTF_8)); }
             Os.chmod(marker.getPath(), 0600);
-            StringBuilder summary = new StringBuilder("Fixed fixture; 128 MiB address space, CPU 2 s, wall 10 s, logs 1 MiB.\n");
             for (boolean trace : new boolean[]{false, true}) {
-                powerCheck();
-                File stdout = new File(directory, trace ? "trace.stdout" : "baseline.stdout");
-                File stderr = new File(directory, trace ? "trace.stderr" : "baseline.stderr");
-                for (File file : new File[]{stdout, stderr}) { if (!file.createNewFile()) throw new IOException("private_file"); Os.chmod(file.getPath(), 0600); }
-                ProcessBuilder builder = new ProcessBuilder(
-                    new File(getApplicationInfo().nativeLibraryDir, "libpocket_runner.so").getPath(),
-                    new File(getApplicationInfo().nativeLibraryDir, trace ? "libpocket_trace.so" : "libpocket_baseline.so").getPath(), root.getPath());
-                builder.environment().clear(); builder.directory(root);
-                builder.redirectInput(new File("/dev/null")).redirectOutput(stdout).redirectError(stderr);
-                cleanup = false;
-                Process process = builder.start(); child.set(process);
-                boolean ended = false;
-                try {
-                    long deadline = SystemClock.elapsedRealtime() + 13000;
-                    long lastPower = 0;
-                    while (!(ended = process.waitFor(100, TimeUnit.MILLISECONDS))) {
-                        if (SystemClock.elapsedRealtime() > deadline) throw new IOException("deadline");
-                        if (SystemClock.elapsedRealtime() - lastPower >= 1000) { powerCheck(); lastPower = SystemClock.elapsedRealtime(); }
-                    }
-                } finally {
-                    if (!ended) ended = terminate(process);
-                    if (ended) child.compareAndSet(process, null);
-                    process.getInputStream().close(); process.getErrorStream().close(); process.getOutputStream().close();
-                    if (ended) cleanup = PrivateFiles.read(stdout, ProbeProtocol.LOG_CAP).endsWith("cleanup=ok\n");
-                }
-                String output = PrivateFiles.read(stdout, ProbeProtocol.LOG_CAP);
-                ProbeProtocol.Counts counts = ProbeProtocol.records(PrivateFiles.read(stderr, ProbeProtocol.LOG_CAP));
-                boolean passed = ProbeProtocol.fixturePassed(process.exitValue(), output, counts, trace);
-                summary.append(trace ? "trace" : "baseline").append(": ").append(passed ? "pass" : "fail")
-                    .append("; exit=").append(process.exitValue()).append("; enter=").append(counts.enters)
-                    .append("; return=").append(counts.returns).append("; cleanup=").append(cleanup).append('\n');
-                if (!passed || !cleanup) break;
+                report.beginPhase(trace); report.stage = ProbeReport.Stage.POWER; powerCheck();
+                if (!runMode(report, directory, root, trace, summary)) break;
             }
-            return summary + "This tests only this signed fixture in the companion app. Firefox and current TAWC equivalence remain untested.";
-        } finally {
-            if (cleanup) PrivateFiles.removeRun(parent, directory);
+        } catch (Exception error) { report.fail(error, numericErrno(error)); }
+        finally {
+            if (directory != null && report.canRemoveFiles()) {
+                try {
+                    if (!report.failed()) report.stage = ProbeReport.Stage.FILES_CLEANUP;
+                    PrivateFiles.removeRun(parent, directory);
+                    report.files = ProbeReport.FilesState.REMOVED;
+                } catch (Exception cleanupError) { report.cleanupFailed(cleanupError); }
+            }
         }
+        return report.render() + "\n" + summary +
+            "Fixed signed marker only. Android/TAWC process equivalence, Firefox and Omarchy remain untested.";
+    }
+    private boolean runMode(ProbeReport report, File directory, File root, boolean trace, StringBuilder summary) throws Exception {
+        report.stage = ProbeReport.Stage.OUTPUT;
+        File stdout = new File(directory, trace ? "trace.stdout" : "baseline.stdout");
+        File stderr = new File(directory, trace ? "trace.stderr" : "baseline.stderr");
+        for (File file : new File[]{stdout, stderr}) {
+            if (!file.createNewFile()) throw new ProbeReport.Failure(ProbeReport.Category.FILES);
+            Os.chmod(file.getPath(), 0600);
+        }
+        report.stage = ProbeReport.Stage.START;
+        ProcessBuilder builder = new ProcessBuilder(
+            new File(getApplicationInfo().nativeLibraryDir, "libpocket_runner.so").getPath(),
+            new File(getApplicationInfo().nativeLibraryDir, trace ? "libpocket_trace.so" : "libpocket_baseline.so").getPath(), root.getPath());
+        builder.environment().clear(); builder.directory(root);
+        builder.redirectInput(new File("/dev/null")).redirectOutput(stdout).redirectError(stderr);
+        if (cancelled) throw new ProbeReport.Failure(ProbeReport.Category.CANCELLED);
+        report.beforeStart();
+        Process process = builder.start(); child.set(process); report.started();
+        boolean ended = false;
+        try {
+            report.stage = ProbeReport.Stage.WAIT;
+            long deadline = SystemClock.elapsedRealtime() + 13000, lastPower = 0;
+            while (!(ended = process.waitFor(100, TimeUnit.MILLISECONDS))) {
+                if (SystemClock.elapsedRealtime() > deadline) throw new ProbeReport.Failure(ProbeReport.Category.DEADLINE);
+                if (SystemClock.elapsedRealtime() - lastPower >= 1000) { powerCheck(); lastPower = SystemClock.elapsedRealtime(); }
+            }
+            if (cancelled) throw new ProbeReport.Failure(ProbeReport.Category.CANCELLED);
+        } catch (Exception error) { report.fail(error, numericErrno(error)); }
+        finally {
+            if (!ended) ended = terminate(process);
+            if (ended) { report.ended(process.exitValue()); child.compareAndSet(process, null); }
+            if (!report.failed()) report.stage = ProbeReport.Stage.STREAMS;
+            for (java.io.Closeable stream : new java.io.Closeable[]{process.getInputStream(), process.getErrorStream(), process.getOutputStream()}) {
+                try { stream.close(); } catch (Exception closeError) { report.cleanupFailed(closeError); }
+            }
+            if (ended) {
+                if (!report.failed()) report.stage = ProbeReport.Stage.GROUP_CHECK;
+                try {
+                    if (PrivateFiles.read(stdout, ProbeProtocol.LOG_CAP).endsWith("cleanup=ok\n")) report.verifiedGroup();
+                } catch (Exception readError) { report.fail(readError, numericErrno(readError)); }
+            }
+        }
+        if (report.failed()) return false;
+        if (!ended) throw new ProbeReport.Failure(ProbeReport.Category.DEADLINE);
+        report.stage = ProbeReport.Stage.TRACE_PARSE;
+        String output = PrivateFiles.read(stdout, ProbeProtocol.LOG_CAP);
+        ProbeProtocol.Counts counts;
+        String stderrText = PrivateFiles.read(stderr, ProbeProtocol.LOG_CAP);
+        try { counts = ProbeProtocol.records(stderrText); }
+        catch (IOException formatError) { throw new ProbeReport.Failure(ProbeReport.Category.FORMAT); }
+        report.stage = ProbeReport.Stage.VERIFY;
+        boolean passed = ProbeProtocol.fixturePassed(report.exit, output, counts, trace);
+        summary.append(trace ? "trace" : "baseline").append(": ").append(passed ? "pass" : "fail")
+            .append("; exit=").append(report.exit).append("; enter=").append(counts.enters)
+            .append("; return=").append(counts.returns).append("; cleanup=").append(report.group == ProbeReport.Group.VERIFIED).append('\n');
+        if (!passed || report.group != ProbeReport.Group.VERIFIED) throw new ProbeReport.Failure(ProbeReport.Category.RESULT);
+        return true;
     }
     private boolean terminate(Process process) {
         boolean interrupted = Thread.interrupted();

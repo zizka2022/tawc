@@ -974,3 +974,22 @@ Host-side JUnit tests for the Kotlin app live in `app/src/test/`
 Deps: `junit:junit` plus the real `org.json:json` artifact, which
 shadows the throw-on-use stubs in the mockable android.jar so
 `JSONObject`-based code runs off-device.
+
+The companion v2 replaces the generic failure text with fixed stage/category
+codes and bounded errno/exit values; it never renders exception messages,
+stack traces or private paths. Child exit, owned-group evidence and private-file
+cleanup are separate states. Failed process start is unknown, not proof of no
+child, and retained/uncertain data still blocks another run. Startup reads only
+its own package version and generated-run count; it starts no fixture. The CI
+JUnit gate requires all three suites: 18 tests, zero failures/errors/skips.
+No production permissions, command surface, native runtime or toolchain changes.
+An updated APK requires separate phone installation and fixture approval.
+
+Installing v2 over v1 is a package update. Android normally kills the updated
+package processes, and the documented dont-kill option only applies to inherited
+split-addition sessions, not this full APK. Treat the user-confirmed helper update
+as potentially terminating uncertain helper children. It preserves private app
+data, so retained runs still block a fixture. A later absence of a child after
+update is not proof that v1's first attempt cleaned up. Capture available current
+read-only evidence first; do not claim pre-update cleanup or descendants from
+post-update state. No TAWC package update is part of this change.

@@ -55,7 +55,7 @@ def inspect(path,source):
         assert all(e['name'] in allowed for e in elements), 'Unexpected permission/component/surface'
         def tags(name):return [e for e in elements if e['name']==name]
         manifest=tags('manifest')[0]['attrs'];app=tags('application')[0]['attrs']
-        assert manifest['package']==PACKAGE and manifest['versionCode']==1
+        assert manifest['package']==PACKAGE and manifest['versionCode']==2
         assert not app.get('debuggable',False) and not app.get('testOnly',False)
         assert app['allowBackup'] is False and app['fullBackupContent'] is False
         assert app['extractNativeLibs'] is True and app['usesCleartextTraffic'] is False
@@ -77,7 +77,7 @@ def inspect(path,source):
         assert b'[te] ' not in archive.read('lib/arm64-v8a/libpocket_baseline.so')
         assert b'[te] ' in archive.read('lib/arm64-v8a/libpocket_trace.so')
         assert archive.read('assets/LICENSE')==Path(__file__).resolve().parents[2].joinpath('LICENSE').read_bytes()
-        return {'source_commit':source,'package':PACKAGE,'version_code':1,'debuggable':False,'permissions':[],
+        return {'source_commit':source,'package':PACKAGE,'version_code':2,'debuggable':False,'permissions':[],
                 'exported_components':['fixed launcher Activity only; ignores intent data/extras'],
                 'package_visibility':['me.phie.tawc'],'native_and_fixture':hashes,
                 'runtime_source_commit':provenance['runtime_source_commit'],'apk_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),

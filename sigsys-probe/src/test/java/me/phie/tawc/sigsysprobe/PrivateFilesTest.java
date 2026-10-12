@@ -10,7 +10,15 @@ import static org.junit.Assert.*;
 public class PrivateFilesTest {
     @Test public void hashStopsBeforeOpeningFileWhenCancelled() throws Exception {
         try { PrivateFiles.hash(new File("missing-fixture"), 1024, Long.MAX_VALUE, () -> true); fail("cancellation bypass"); }
-        catch (IOException expected) { assertEquals("cancelled", expected.getMessage()); }
+        catch (IOException expected) { assertEquals(ProbeReport.Category.CANCELLED, ProbeReport.classify(expected)); }
+    }
+    @Test public void retainedRunCheckReadsNamesOnlyAndDoesNotDelete() throws Exception {
+        File parent = Files.createTempDirectory("probe-retained-test-").toFile();
+        File run = new File(parent, "run-fixture");
+        try {
+            assertEquals(0, PrivateFiles.pendingRuns(parent)); assertTrue(run.mkdir());
+            assertEquals(1, PrivateFiles.pendingRuns(parent)); assertTrue(run.exists());
+        } finally { run.delete(); parent.delete(); }
     }
     @Test public void boundedReaderRefusesOversizedBytes() throws Exception {
         assertEquals(4, PrivateFiles.bytes(new ByteArrayInputStream(new byte[4]), 4).length);

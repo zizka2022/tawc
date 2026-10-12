@@ -11,7 +11,7 @@ import java.util.function.BooleanSupplier;
 
 final class PackageMetadata {
     static String read(Context context, BooleanSupplier cancelled) throws Exception {
-        if (cancelled.getAsBoolean()) throw new java.io.IOException("cancelled");
+        if (cancelled.getAsBoolean()) throw new ProbeReport.Failure(ProbeReport.Category.CANCELLED);
         PackageInfo info = context.getPackageManager().getPackageInfo(
             "me.phie.tawc", PackageManager.GET_SIGNING_CERTIFICATES);
         if (info.applicationInfo == null) return "Package metadata unavailable.";
@@ -42,7 +42,7 @@ final class PackageMetadata {
         }
         File runtime = new File(info.applicationInfo.nativeLibraryDir, "libtawcroot.so");
         appendFileHash(result, "installed native runtime", runtime, deadline, cancelled);
-        if (cancelled.getAsBoolean()) throw new java.io.IOException("cancelled");
+        if (cancelled.getAsBoolean()) throw new ProbeReport.Failure(ProbeReport.Category.CANCELLED);
         PackageInfo after = context.getPackageManager().getPackageInfo("me.phie.tawc", 0);
         if (after.lastUpdateTime != info.lastUpdateTime || after.getLongVersionCode() != info.getLongVersionCode())
             return "Package changed during query; no consistent provenance snapshot.";
@@ -50,7 +50,7 @@ final class PackageMetadata {
         return result.toString();
     }
     private static void appendFileHash(StringBuilder result, String label, File file, long deadline, BooleanSupplier cancelled) throws Exception {
-        if (cancelled.getAsBoolean()) throw new java.io.IOException("cancelled");
+        if (cancelled.getAsBoolean()) throw new ProbeReport.Failure(ProbeReport.Category.CANCELLED);
         try { result.append("\n").append(label).append(" SHA-256: ").append(PrivateFiles.hash(file, 128L*1024*1024, deadline, cancelled)); }
         catch (Exception ignored) { result.append("\n").append(label).append(": unreadable or budget exceeded (no fallback)."); }
     }
