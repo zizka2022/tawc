@@ -115,6 +115,44 @@ before phone approval. APK installation can close TAWC and personal guest
 sessions; it is separate from CI authorization. The recovered version-3 APK
 is a recovery candidate until its identity matches the installed app.
 
+### Separate fixed-fixture companion
+
+The diagnostic branch also builds `:sigsys-probe`, package
+`me.phie.tawc.sigsysprobe` version 1, without permissions, network access,
+services/providers/receivers, or an exported command interface. Its single
+launcher ignores intent inputs; a local button is required for the fixed marker
+fixture. It does not replace TAWC or share its rootfs/browser profiles. The
+release variant is not debuggable and uses the existing CI signing certificate.
+
+`scripts/ci/build-sigsys-probe.sh prepare|package` uses the existing SDK 36,
+NDK 27.2, Java 21, AGP 8.9.1 and existing JUnit 4.13.2 dependency. Preparation
+requires exact previously reviewed baseline/trace bytes, compiles a libc-free
+supervisor and static ARM64 fixture, and runs host, Java unit and Android lint
+checks before signing material is restored. Packaging verifies the certificate,
+manifest surface and every embedded native/fixture hash before exposing an APK
+to the unchanged heuristic scanner's new `companion` allowlist. Failure-only
+logs can be gated; an unchecked or partial APK cannot. Approved snapshots expire
+after 7 days. No repository permission, runner tier, secret or existing timeout
+is added or increased.
+
+The supervisor narrows its own limits (128 MiB address space, CPU 2 seconds,
+10-second wall deadline, 1 MiB per output file, core dumps off, one allowed CPU,
+nice at least 15). An unreaped group leader and subreaper keep cleanup confined
+to owned descendants. The app additionally checks charging/thermal state,
+cancels on backgrounding, and deletes only its generated private run directory
+after verified cleanup. It never retries denied metadata access or opens process
+memory. The metadata reader queries only installed TAWC package/certificates and
+hashes its public code files; installed-file hashes do not identify already
+loaded deleted runtimes.
+
+Companion UID, permissions and storage differ from TAWC. A fixed marker pass is
+neither Firefox reproduction nor full Omarchy/Android equivalence. Android
+execution remains untested until separately approved installation/activation.
+The current Controller installer allowlist does not include this package; use
+only an already-authorized Android installer after approval. No grants or
+allowlist expansion occur in this build. Removing only the companion is the
+proposed rollback; existing desktops/data remain available.
+
 ## Host packages
 
 ### Always required

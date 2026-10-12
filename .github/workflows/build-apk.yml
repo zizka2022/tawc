@@ -240,3 +240,55 @@ jobs:
           name: tawcroot-arm64-trace-${{ github.sha }}
           path: ${{ steps.arm64_privacy.outputs.paths }}
           retention-days: 7
+
+      # Companion checks finish before the same signing identity is restored.
+      - name: Prepare and test isolated SIGSYS companion
+        id: companion_tests
+        if: steps.arm64_privacy.conclusion == 'success'
+        timeout-minutes: 20
+        run: |
+          mkdir -p build/pocket-tawcroot-diagnostics/companion
+          bash scripts/ci/build-sigsys-probe.sh prepare \
+            > build/pocket-tawcroot-diagnostics/companion/prepare.log 2>&1
+
+      - name: Restore existing signing identity for companion
+        if: steps.companion_tests.conclusion == 'success'
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          set +x
+          umask 077
+          [[ -n "$DEBUG_KEYSTORE_B64" ]] || exit 2
+          for d in "$HOME/.android" /root/.android; do
+            mkdir -p "$d"
+            printf '%s' "$DEBUG_KEYSTORE_B64" | base64 -d > "$d/debug.keystore"
+            chmod 600 "$d/debug.keystore"
+          done
+          echo "ANDROID_USER_HOME=$HOME/.android" >> "$GITHUB_ENV"
+
+      - name: Build signed isolated SIGSYS companion
+        if: steps.companion_tests.conclusion == 'success'
+        timeout-minutes: 12
+        run: |
+          bash scripts/ci/build-sigsys-probe.sh package \
+            >> build/pocket-tawcroot-diagnostics/companion/prepare.log 2>&1
+
+      - name: Remove companion signing material
+        if: always() && steps.companion_tests.conclusion != 'skipped'
+        run: |
+          set +x
+          rm -f "$HOME/.android/debug.keystore" /root/.android/debug.keystore
+
+      - name: Gate isolated companion and captured evidence
+        id: companion_privacy
+        if: always() && steps.companion_tests.conclusion != 'skipped'
+        timeout-minutes: 3
+        run: python3 scripts/ci/check-public-artifacts.py companion
+
+      - name: Upload approved isolated companion evidence
+        if: always() && steps.companion_privacy.conclusion == 'success' && steps.companion_privacy.outputs.approved == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pocket-sigsys-probe-${{ github.sha }}
+          path: ${{ steps.companion_privacy.outputs.paths }}
+          retention-days: 7

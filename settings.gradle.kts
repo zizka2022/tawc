@@ -16,6 +16,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "tawc"
 include(":app")
+include(":sigsys-probe")
 
 // Termux's terminal-emulator + terminal-view (Apache-2.0) provide the
 // in-app terminal widget, and :termux-extrakeys compiles termux's

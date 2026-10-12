@@ -290,6 +290,15 @@ def artifact_paths(root, mode, sha):
         allowed = [base / name for name in ('build.log', 'unit-tests.log', 'signing-check.log')] + [apk, apk.with_name('SHA256SUMS')]
         if not (root / apk).is_file() or not (root / apk.with_name('SHA256SUMS')).is_file():
             raise Blocked('required-artifact-unavailable')
+    elif mode == 'companion':
+        if not re.fullmatch('[0-9a-f]{40}', sha):
+            raise Blocked('source-reference-unavailable')
+        base = out / 'companion'
+        apk = base / f'pocket-sigsys-probe-{sha[:7]}.apk'
+        allowed = [base / name for name in ('prepare.log', 'build.log', 'native-tests.log', 'unit-tests.log', 'lint.log', 'signing-check.log', 'manifest.json', 'SHA256SUMS')] + [apk]
+        if (root / apk).is_file():
+            if not (root / base / 'manifest.json').is_file() or not (root / base / 'SHA256SUMS').is_file():
+                raise Blocked('required-artifact-unavailable')
     else:
         raise Blocked('unsupported-artifact-kind')
     if not (root / base).is_dir() or (root / base).is_symlink():
@@ -321,12 +330,21 @@ def approve(root, mode, sha):
         data = (root / relative).read_bytes()
         scanner.inspect(data, str(relative))
         snapshots.append((relative, data))
-    if mode == 'apk':
-        apk = next((relative, data) for relative, data in snapshots if relative.suffix == '.apk')
-        checksum = next(data for relative, data in snapshots if relative.name == 'SHA256SUMS')
-        expected = f'{hashlib.sha256(apk[1]).hexdigest()}  {apk[0].name}\n'.encode()
-        if checksum != expected:
-            raise Blocked('artifact-checksum-mismatch')
+    if mode in ('apk', 'companion'):
+        # Failure-only companion logs may be approved, but an APK requires the
+        # successful signed manifest and exact checksum. Never publish a partial APK.
+        if mode == 'companion' and not any(relative.suffix == '.apk' for relative, _ in snapshots):
+            pass
+        else:
+            apk = next((relative, data) for relative, data in snapshots if relative.suffix == '.apk')
+            checksum = next(data for relative, data in snapshots if relative.name == 'SHA256SUMS')
+            expected = f'{hashlib.sha256(apk[1]).hexdigest()}  {apk[0].name}\n'.encode()
+            if checksum != expected:
+                raise Blocked('artifact-checksum-mismatch')
+            if mode == 'companion':
+                manifest = json.loads(next(data for relative, data in snapshots if relative.name == 'manifest.json'))
+                if manifest.get('source_commit') != sha or manifest.get('apk_sha256') != hashlib.sha256(apk[1]).hexdigest() or manifest.get('package') != 'me.phie.tawc.sigsysprobe' or manifest.get('certificate_sha256') != '1d023213c6fa11f51455508f595ddbd80a906d761e85dc9f21738c017d911afd':
+                    raise Blocked('artifact-manifest-mismatch')
     # Upload only frozen, inspected bytes. No file is copied after its check.
     stage = root / 'build/public-artifacts' / mode
     if stage.exists() or any(parent.is_symlink() for parent in stage.parents):
