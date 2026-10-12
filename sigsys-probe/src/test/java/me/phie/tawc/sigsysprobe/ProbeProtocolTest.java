@@ -38,6 +38,9 @@ public class ProbeProtocolTest {
     }
     @Test public void powerAndThermalChecksFailClosed() {
         assertTrue(ProbeProtocol.powerSafe(100, 1, 5, 340, 0));
+        assertTrue(ProbeProtocol.powerSafe(98, 1, 5, 296, 0));
+        assertTrue(ProbeProtocol.powerSafe(98, 2, 5, 296, 0));
+        assertFalse(ProbeProtocol.powerSafe(100, 0, 5, 296, 0));
         assertTrue(ProbeProtocol.powerSafe(50, 2, 2, 380, 1));
         assertFalse(ProbeProtocol.powerSafe(50, 0, 2, 340, 0));
         assertFalse(ProbeProtocol.powerSafe(50, 4, 2, 340, 0));

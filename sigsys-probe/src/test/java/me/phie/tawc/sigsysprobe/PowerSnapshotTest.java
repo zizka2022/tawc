@@ -12,9 +12,10 @@ public class PowerSnapshotTest {
         assertTrue(value.permitsFixture()); assertEquals(0, value.failed);
         assertTrue(value.render().contains("pct=98 plug=1 status=2 temp=370 thermal=1"));
     }
-    @Test public void fullFiveBelowHundredIsStillRejectedOnlyByChargePredicate() {
+    @Test public void fullFiveBelowHundredPassesForAcAndUsb() {
         PowerSnapshot value = snapshot(98, 100, 1, 5, 370, 1);
-        assertFalse(value.permitsFixture()); assertEquals(PowerSnapshot.CHARGE, value.failed);
+        assertTrue(value.permitsFixture()); assertEquals(0, value.failed);
+        assertTrue(snapshot(98, 100, 2, 5, 370, 1).permitsFixture());
         assertTrue(snapshot(100, 100, 1, 5, 370, 1).permitsFixture());
     }
     @Test public void missingScaleIsVisibleAndDoesNotGainControllerDefault() {
@@ -51,7 +52,7 @@ public class PowerSnapshotTest {
             assertTrue(value.render().matches("power bits=[0-9]+ avail=[0-3] level=-?[0-9]+ scale=-?[0-9]+ pct=-?[0-9]+ plug=-?[0-9]+ status=-?[0-9]+ temp=-?[0-9]+ thermal=-?[0-9]+ read_code=[0-9]+ errno=[0-9]+"));
         }
     }
-    @Test public void snapshotDecisionsMatchEveryExistingPredicateAcrossBoundaryDomain() {
+    @Test public void snapshotDecisionsMatchReferenceGateAcrossBoundaryDomain() {
         for (int level : new int[]{-1,0,29,30,98,100,101,Integer.MAX_VALUE})
         for (int scale : new int[]{-1,0,100})
         for (int plugged : new int[]{0,1,2,4})
@@ -60,6 +61,53 @@ public class PowerSnapshotTest {
         for (int thermal : new int[]{-1,0,1,2}) {
             PowerSnapshot value = snapshot(level, scale, plugged, status, temperature, thermal);
             assertEquals(ProbeProtocol.powerSafe(value.percent, plugged, status, temperature, thermal), value.permitsFixture());
+        }
+    }
+    @Test public void unpluggedWirelessDockAndCombinedFullRemainRejected() {
+        for (int plugged : new int[]{0,3,4,8,-1})
+        for (int level : new int[]{98,100}) {
+            PowerSnapshot value = snapshot(level, 100, plugged, 5, 296, 0);
+            assertEquals(PowerSnapshot.PLUG, value.failed); assertFalse(value.permitsFixture());
+            assertFalse(ProbeProtocol.powerSafe(level, plugged, 5, 296, 0));
+        }
+    }
+    @Test public void fullDoesNotBypassBatteryTemperatureThermalServicesOrReadErrors() {
+        assertEquals(PowerSnapshot.PERCENT, snapshot(29, 100, 1, 5, 296, 0).failed);
+        assertEquals(PowerSnapshot.PERCENT, snapshot(98, -1, 1, 5, 296, 0).failed);
+        assertEquals(PowerSnapshot.TEMPERATURE, snapshot(98, 100, 1, 5, 385, 0).failed);
+        assertEquals(PowerSnapshot.THERMAL, snapshot(98, 100, 1, 5, 296, 2).failed);
+        PowerSnapshot absent = new PowerSnapshot(false, false, 98, 100, 1, 5, 296, 0, 0, 0);
+        assertEquals(PowerSnapshot.BATTERY_MISSING | PowerSnapshot.SERVICE_MISSING, absent.failed);
+        assertFalse(absent.permitsFixture());
+        PowerSnapshot error = new PowerSnapshot(true, true, 98, 100, 1, 5, 296, 0, 10, 13);
+        assertEquals(PowerSnapshot.READ_ERROR, error.failed); assertFalse(error.permitsFixture());
+    }
+    @Test public void belowHundredUnknownDischargingAndNotChargingRemainRejected() {
+        for (int plugged : new int[]{1,2})
+        for (int status : new int[]{-1,0,1,3,4,6,Integer.MAX_VALUE}) {
+            PowerSnapshot value = snapshot(98, 100, plugged, status, 296, 0);
+            assertEquals(PowerSnapshot.CHARGE, value.failed); assertFalse(value.permitsFixture());
+            assertFalse(ProbeProtocol.powerSafe(98, plugged, status, 296, 0));
+            // Retain the already-existing percent100 behavior; no new unknown fallback.
+            assertTrue(snapshot(100, 100, plugged, status, 296, 0).permitsFixture());
+        }
+    }
+    @Test public void fullIsTheOnlyChangedFailureBitAcrossBoundaryDomain() {
+        for (int level : new int[]{-1,0,29,30,98,100,101,Integer.MAX_VALUE})
+        for (int scale : new int[]{-1,0,100})
+        for (int plugged : new int[]{0,1,2,3,4,8})
+        for (int status : new int[]{-1,0,1,2,3,4,5,6})
+        for (int temperature : new int[]{384,385,1000})
+        for (int thermal : new int[]{-1,0,1,2}) {
+            PowerSnapshot value = snapshot(level, scale, plugged, status, temperature, thermal);
+            int original = 0;
+            if (value.percent < 30) original |= PowerSnapshot.PERCENT;
+            if (plugged != 1 && plugged != 2) original |= PowerSnapshot.PLUG;
+            if (status != 2 && value.percent != 100) original |= PowerSnapshot.CHARGE;
+            if (temperature >= 385) original |= PowerSnapshot.TEMPERATURE;
+            if (thermal >= 2) original |= PowerSnapshot.THERMAL;
+            int expected = status == 5 ? original & ~PowerSnapshot.CHARGE : original;
+            assertEquals(expected, value.failed);
         }
     }
 }

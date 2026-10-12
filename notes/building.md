@@ -994,17 +994,24 @@ update is not proof that v1's first attempt cleaned up. Capture available curren
 read-only evidence first; do not claim pre-update cleanup or descendants from
 post-update state. No TAWC package update is part of this change.
 
-Companion v3 adds a read-only startup/status power panel and an explicit status
+Companion v4 retains the read-only startup/status power panel and explicit status
 button; neither dispatches package hashes or the fixture. Numeric fields are raw
 level/scale, derived percent, plug/status, temperature in tenths C, thermal status,
 service availability, a fixed read-error category and bounded errno. Failure bits:
 1 missing battery Intent, 2 missing PowerManager, 4 percent below30/unknown,
-8 not AC/USB, 16 not charging2 and not100%, 32 temperature at least385,
-64 thermal at least2, 128 read failure. The existing gate is unchanged, including
-rejection of FULL5 below100; no hypothesis about the earlier failure is confirmed
-without measured helper data. The power line fits the200-character Accessibility
-limit even at signed-int extremes. Status and fixture reports are separate views.
-JUnit must verify28 cases in5 suites, including legacy gate equivalence across
-boundary inputs and startup/status callback non-execution. No native bytes,
-permissions, toolchain, security policy or resource limit changes. A phone update
-or diagnostic/fixture action still needs its explicit action-time approval.
+8 not AC/USB, 16 neither charging2 nor FULL5 nor100%, 32 temperature at least385,
+64 thermal at least2, 128 read failure. The sole semantic correction accepts
+Android FULL5 alongside CHARGING2, with AC/USB still mandatory. Unplugged, wireless,
+dock and combined plug values remain rejected. Battery minimum, temperature,
+thermal, service/read validity and the legacy percent100 behavior are unchanged.
+Android defines these constants in its public
+[BatteryManager reference](https://developer.android.com/reference/android/os/BatteryManager#BATTERY_STATUS_FULL).
+A read-only v3 phone snapshot measured AC/FULL5 at98%,29.6C,thermal0, with only
+bit16 set. This confirms the current gate mismatch. V2 captured no raw snapshot,
+so its exact historical cause remains unproven; v1 cleanup also remains unknown.
+The power line fits the200-character Accessibility limit even at signed-int
+extremes. Status and fixture reports are separate views. JUnit must verify32 cases
+in5 suites, including the exact FULL-only predicate delta, rejected unpluggedFULL,
+other failure bits, reference-gate boundaries and startup/status non-execution.
+No native bytes, permissions, toolchain, security policy, resource or duration
+limit changes. A phone update or fixture action still needs separate approval.

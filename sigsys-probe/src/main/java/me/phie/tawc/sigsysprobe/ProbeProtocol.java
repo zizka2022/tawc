@@ -17,7 +17,7 @@ final class ProbeProtocol {
 
     static boolean powerSafe(int percent, int plugged, int status, int temperature, int thermal) {
         return percent >= 30 && (plugged == 1 || plugged == 2) &&
-            (status == 2 || percent == 100) && temperature < 385 && thermal < 2;
+            (status == 2 || status == 5 || percent == 100) && temperature < 385 && thermal < 2;
     }
     static Counts records(String text) throws IOException {
         Counts counts = new Counts();

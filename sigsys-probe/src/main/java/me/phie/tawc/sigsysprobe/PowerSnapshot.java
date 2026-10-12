@@ -13,12 +13,12 @@ final class PowerSnapshot {
         this.temperature = temperature; this.thermal = thermal;
         this.readCode = readCode == 0 ? 0 : readCode >= 1 && readCode <= 11 ? readCode : 10;
         this.errno = errno >= 1 && errno <= 4095 ? errno : 0;
-        // Preserve exactly the v2 percent calculation and all its gate predicates.
+        // Preserve percent and every other gate; accept Android FULL alongside CHARGING.
         percent = scale > 0 && level >= 0 ? level * 100 / scale : -1;
         int bits = (batteryPresent ? 0 : BATTERY_MISSING) | (servicePresent ? 0 : SERVICE_MISSING);
         if (percent < 30) bits |= PERCENT;
         if (plugged != 1 && plugged != 2) bits |= PLUG;
-        if (status != 2 && percent != 100) bits |= CHARGE;
+        if (status != 2 && status != 5 && percent != 100) bits |= CHARGE;
         if (temperature >= 385) bits |= TEMPERATURE;
         if (thermal >= 2) bits |= THERMAL;
         if (readCode != 0) bits |= READ_ERROR;
