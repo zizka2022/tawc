@@ -61,9 +61,9 @@ python3 - "$ROOT" >> "$OUT/unit-tests.log" <<'PYTEST'
 from pathlib import Path
 import sys,xml.etree.ElementTree as ET,json
 reports=list((Path(sys.argv[1])/'sigsys-probe/build/test-results/testReleaseUnitTest').glob('TEST-*.xml'))
-assert len(reports)==3, 'Expected all companion test suites'
+assert len(reports)==5, 'Expected all companion test suites'
 counts={key:sum(int(ET.parse(p).getroot().get(key,'0')) for p in reports) for key in ('tests','failures','errors','skipped')}
-assert counts=={'tests':18,'failures':0,'errors':0,'skipped':0}, 'Companion test counts differ'
+assert counts=={'tests':28,'failures':0,'errors':0,'skipped':0}, 'Companion test counts differ'
 print(json.dumps({'companion_java_test_results':counts}))
 PYTEST
 timeout --signal=TERM --kill-after=15s 5m "$ROOT/gradlew" --no-daemon :sigsys-probe:lintRelease \

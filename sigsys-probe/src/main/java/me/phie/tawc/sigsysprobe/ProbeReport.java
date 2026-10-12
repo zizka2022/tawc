@@ -68,7 +68,7 @@ final class ProbeReport {
     }
     private String word(Enum<?> value) { return value.name().toLowerCase(Locale.ROOT); }
     String render() {
-        return "probe=2 " + (failed() ? "fail" : "status") + " stage=" + word(stage) +
+        return "probe=3 " + (failed() ? "fail" : "status") + " stage=" + word(stage) +
             " phase=" + word(phase) + " cat=" + word(category) + " code=" + category.code +
             " errno=" + errno + " exit=" + (exit < 0 ? "unknown" : exit) +
             " child=" + word(child) + " group=" + word(group) + " files=" + word(files) +

@@ -30,8 +30,10 @@ public final class ProbeActivity extends Activity {
     private final AtomicReference<Process> child = new AtomicReference<>();
     private volatile boolean cancelled;
     private boolean busy;
-    private TextView result;
-    private Button metadata, run;
+    private TextView result, powerResult;
+    private Button metadata, run, status;
+    private volatile PowerSnapshot lastPower;
+    private final ProbeActions actions = new ProbeActions(this::readStatus, () -> task(false), () -> task(true));
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -47,25 +49,32 @@ public final class ProbeActivity extends Activity {
             "Its child uses this app's UID and Android launch environment, not TAWC's UID.\n" +
             "A passing marker test proves tracing for this fixture, not Firefox or Omarchy compatibility.");
         content.addView(explanation);
+        status = new Button(this); status.setText("Read power and cleanup status");
+        status.setOnClickListener(view -> actions.press(ProbeActions.Action.STATUS)); content.addView(status);
         metadata = new Button(this); metadata.setText("Read installed TAWC metadata");
-        metadata.setOnClickListener(view -> task(false)); content.addView(metadata);
+        metadata.setOnClickListener(view -> actions.press(ProbeActions.Action.METADATA)); content.addView(metadata);
         run = new Button(this); run.setText("Run private syscall fixture");
-        run.setOnClickListener(view -> task(true)); content.addView(run);
+        run.setOnClickListener(view -> actions.press(ProbeActions.Action.FIXTURE)); content.addView(run);
         Button cancel = new Button(this); cancel.setText("Stop this test");
         cancel.setOnClickListener(view -> stop()); content.addView(cancel);
-        result = new TextView(this);
+        powerResult = new TextView(this); powerResult.setTextIsSelectable(true); content.addView(powerResult);
+        result = new TextView(this); result.setTextIsSelectable(true); content.addView(result);
+        ScrollView scroll = new ScrollView(this); scroll.addView(content); setContentView(scroll);
+        actions.startup(); // Read-only sampling; never a metadata hash or fixture callback.
+    }
+    private void readStatus() {
+        if (busy) return;
+        lastPower = readPowerSnapshot(); powerResult.setText(lastPower.render());
         int pending = PrivateFiles.pendingRuns(new File(getFilesDir(), "probe-runs"));
         long installedVersion = -1;
         try { installedVersion = getPackageManager().getPackageInfo(getPackageName(), 0).getLongVersionCode(); }
         catch (Exception ignored) { }
         result.setText("probe_version=" + installedVersion + " pending_runs=" + pending +
-            " previous_cleanup=unverified\nNo runtime activated. Installation/launch needs separate approval.");
-        result.setTextIsSelectable(true); content.addView(result);
-        ScrollView scroll = new ScrollView(this); scroll.addView(content); setContentView(scroll);
+            " previous_cleanup=unverified\nRead-only status; no fixture requested.");
     }
     private void task(boolean fixture) {
         if (busy) return;
-        busy = true; cancelled = false; metadata.setEnabled(false); run.setEnabled(false);
+        busy = true; cancelled = false; metadata.setEnabled(false); run.setEnabled(false); status.setEnabled(false);
         result.setText(fixture ? "Checking provenance and power…" : "Reading public package metadata…");
         worker.execute(() -> {
             String summary;
@@ -77,7 +86,11 @@ public final class ProbeActivity extends Activity {
             String displayed = summary;
             runOnUiThread(() -> {
                 busy = false;
-                if (!isDestroyed()) { result.setText(displayed); metadata.setEnabled(true); run.setEnabled(true); }
+                if (!isDestroyed()) {
+                    result.setText(displayed);
+                    if (lastPower != null) powerResult.setText(lastPower.render());
+                    metadata.setEnabled(true); run.setEnabled(true); status.setEnabled(true);
+                }
             });
         });
     }
@@ -89,17 +102,30 @@ public final class ProbeActivity extends Activity {
     @Override protected void onStop() { stop(); super.onStop(); }
     @Override protected void onDestroy() { stop(); worker.shutdownNow(); super.onDestroy(); }
 
+    private PowerSnapshot readPowerSnapshot() {
+        boolean batteryPresent = false, servicePresent = false;
+        int level = -1, scale = -1, plugged = 0, chargeStatus = -1, temperature = 1000, thermal = -1;
+        int readCode = 0, errno = 0;
+        try {
+            Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+            PowerManager power = (PowerManager)getSystemService(POWER_SERVICE);
+            batteryPresent = battery != null; servicePresent = power != null;
+            if (battery != null) {
+                level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+                plugged = battery.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0);
+                chargeStatus = battery.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+                temperature = battery.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 1000);
+            }
+            if (power != null) thermal = power.getCurrentThermalStatus();
+        } catch (Exception error) { readCode = ProbeReport.classify(error).code; errno = numericErrno(error); }
+        return new PowerSnapshot(batteryPresent, servicePresent, level, scale, plugged, chargeStatus,
+            temperature, thermal, readCode, errno);
+    }
     private void powerCheck() throws IOException {
         if (cancelled) throw new ProbeReport.Failure(ProbeReport.Category.CANCELLED);
-        Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-        PowerManager power = (PowerManager)getSystemService(POWER_SERVICE);
-        if (battery == null || power == null) throw new ProbeReport.Failure(ProbeReport.Category.POWER);
-        int level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
-        int scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
-        int percent = scale > 0 && level >= 0 ? level * 100 / scale : -1;
-        if (!ProbeProtocol.powerSafe(percent, battery.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0),
-            battery.getIntExtra(BatteryManager.EXTRA_STATUS, -1), battery.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 1000),
-            power.getCurrentThermalStatus())) throw new ProbeReport.Failure(ProbeReport.Category.POWER);
+        lastPower = readPowerSnapshot();
+        if (!lastPower.permitsFixture()) throw new ProbeReport.Failure(ProbeReport.Category.POWER);
     }
     private JSONObject provenance() throws Exception {
         try (InputStream input = getAssets().open("provenance.json")) {

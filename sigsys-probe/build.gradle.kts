@@ -9,8 +9,8 @@ android {
         applicationId = "me.phie.tawc.sigsysprobe"
         minSdk = 29
         targetSdk = 36
-        versionCode = 2
-        versionName = "2"
+        versionCode = 3
+        versionName = "3"
         ndk { abiFilters += "arm64-v8a" }
     }
     buildTypes {

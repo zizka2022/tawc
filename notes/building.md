@@ -993,3 +993,18 @@ data, so retained runs still block a fixture. A later absence of a child after
 update is not proof that v1's first attempt cleaned up. Capture available current
 read-only evidence first; do not claim pre-update cleanup or descendants from
 post-update state. No TAWC package update is part of this change.
+
+Companion v3 adds a read-only startup/status power panel and an explicit status
+button; neither dispatches package hashes or the fixture. Numeric fields are raw
+level/scale, derived percent, plug/status, temperature in tenths C, thermal status,
+service availability, a fixed read-error category and bounded errno. Failure bits:
+1 missing battery Intent, 2 missing PowerManager, 4 percent below30/unknown,
+8 not AC/USB, 16 not charging2 and not100%, 32 temperature at least385,
+64 thermal at least2, 128 read failure. The existing gate is unchanged, including
+rejection of FULL5 below100; no hypothesis about the earlier failure is confirmed
+without measured helper data. The power line fits the200-character Accessibility
+limit even at signed-int extremes. Status and fixture reports are separate views.
+JUnit must verify28 cases in5 suites, including legacy gate equivalence across
+boundary inputs and startup/status callback non-execution. No native bytes,
+permissions, toolchain, security policy or resource limit changes. A phone update
+or diagnostic/fixture action still needs its explicit action-time approval.
