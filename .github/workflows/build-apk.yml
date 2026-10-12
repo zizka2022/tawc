@@ -7,6 +7,10 @@ on:
   push:
   workflow_dispatch:
 
+# The job only reads the repo; the token can't push or change settings.
+permissions:
+  contents: read
+
 jobs:
   debug-apk:
     runs-on: ubuntu-24.04
@@ -52,14 +56,16 @@ jobs:
             binutils-aarch64-linux-gnu libc6-arm64-cross \
             linux-libc-dev-arm64-cross
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Mark checkout safe for git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Restore cargo, gradle and vendored deps
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -100,10 +106,14 @@ jobs:
           # The container runs as root with HOME=/github/home, but Java's user.home
           # is /root, and AGP falls back to a fresh random key there. Put the key in
           # both places and point ANDROID_USER_HOME at it.
+          # Keep signing material out of shell tracing and readable only by this job.
+          set +x
+          umask 077
           if [ -n "$DEBUG_KEYSTORE_B64" ]; then
             for d in "$HOME/.android" /root/.android; do
               mkdir -p "$d"
-              echo "$DEBUG_KEYSTORE_B64" | base64 -d > "$d/debug.keystore"
+              printf '%s' "$DEBUG_KEYSTORE_B64" | base64 -d > "$d/debug.keystore"
+              chmod 600 "$d/debug.keystore"
             done
             echo "ANDROID_USER_HOME=$HOME/.android" >> "$GITHUB_ENV"
           else
@@ -118,10 +128,14 @@ jobs:
             -PtawcGraphics=libhybris,cpu -PtawcMethods=tawcroot \
             -PtawcBootstrapPackages=false
 
+      - name: Remove signing key
+        if: always()
+        run: rm -f "$HOME/.android/debug.keystore" /root/.android/debug.keystore
+
       # Saved right after a good build, so a later step failing doesn't lose it.
       - name: Save cargo, gradle and vendored deps
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -147,7 +161,7 @@ jobs:
           fi
           df -h /
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tawc-debug-${{ github.sha }}
           path: |

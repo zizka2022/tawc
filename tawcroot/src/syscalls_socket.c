@@ -685,7 +685,9 @@ static int rewrite_scm_credentials(struct tawc_msghdr *mh,
 	while (off + sizeof(struct tawc_cmsghdr) <= len) {
 		struct tawc_cmsghdr ch;
 		if (tawc_copy_from_guest(&ch, sizeof ch, g + off) < 0) return 0;
-		if (ch.cmsg_len < sizeof ch || off + ch.cmsg_len > len) break;
+		/* len - off, not off + cmsg_len: a huge guest cmsg_len must not
+		 * wrap the sum past the bound (OOB copy, endless loop). */
+		if (ch.cmsg_len < sizeof ch || ch.cmsg_len > len - off) break;
 		if (ch.cmsg_level == SOL_SOCKET_LEVEL &&
 		    ch.cmsg_type == SCM_CREDENTIALS_TYPE &&
 		    ch.cmsg_len >= sizeof ch + sizeof(struct tawc_ucred)) {
@@ -702,7 +704,7 @@ static int rewrite_scm_credentials(struct tawc_msghdr *mh,
 	for (off = 0; off + sizeof(struct tawc_cmsghdr) <= len;) {
 		struct tawc_cmsghdr ch;
 		memcpy(&ch, ctl + off, sizeof ch);
-		if (ch.cmsg_len < sizeof ch || off + ch.cmsg_len > len) break;
+		if (ch.cmsg_len < sizeof ch || ch.cmsg_len > len - off) break;
 		if (ch.cmsg_level == SOL_SOCKET_LEVEL &&
 		    ch.cmsg_type == SCM_CREDENTIALS_TYPE &&
 		    ch.cmsg_len >= sizeof ch + sizeof(struct tawc_ucred)) {
