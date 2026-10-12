@@ -27,13 +27,13 @@ for name,path,expected in inputs:
 (assets/'LICENSE').write_bytes((root/'LICENSE').read_bytes())
 PY
 NDK="${ANDROID_HOME:?}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin"
-FLAGS=(-O2 -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -Wframe-larger-than=1024 -static -nostdlib -nostartfiles -no-pie -Wl,--build-id=none -Wl,-z,noexecstack)
+FLAGS=(-O2 -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -Wframe-larger-than=1024 -static -nostdlib -nostartfiles -fno-pie -Wl,-no-pie -Wl,--build-id=none -Wl,-z,noexecstack)
 timeout --signal=TERM --kill-after=15s 2m "$NDK/aarch64-linux-android29-clang" "${FLAGS[@]}" \
     -I"$ROOT/tawcroot/include" "$ROOT/sigsys-probe/native/runner.c" \
     "$ROOT/sigsys-probe/native/start_aarch64.S" "$ROOT/sigsys-probe/native/raw_aarch64.S" \
     -o "$JNI/libpocket_runner.so"
 timeout --signal=TERM --kill-after=15s 2m "$NDK/aarch64-linux-android29-clang" \
-    -static -nostdlib -nostartfiles -no-pie -Wl,--build-id=none -Wl,-z,noexecstack \
+    -static -nostdlib -nostartfiles -fno-pie -Wl,-no-pie -Wl,--build-id=none -Wl,-z,noexecstack \
     "$ROOT/sigsys-probe/native/fixture_aarch64.S" -o "$ASSETS/probe-fixture"
 [[ -z "$("$NDK/llvm-nm" -u "$JNI/libpocket_runner.so")" ]] || exit 2
 python3 - "$ROOT" "$ASSETS" "$JNI" <<'PY'
@@ -57,6 +57,15 @@ timeout --signal=TERM --kill-after=15s 2m python3 "$ROOT/scripts/ci/test-sigsys-
 COMMON=(-PtawcAbis=arm64-v8a -PtawcXwayland=true -PtawcGraphics=libhybris,cpu -PtawcMethods=tawcroot -PtawcBootstrapPackages=false)
 timeout --signal=TERM --kill-after=15s 5m "$ROOT/gradlew" --no-daemon :sigsys-probe:testReleaseUnitTest \
     "${COMMON[@]}" > "$OUT/unit-tests.log" 2>&1
+python3 - "$ROOT" >> "$OUT/unit-tests.log" <<'PYTEST'
+from pathlib import Path
+import sys,xml.etree.ElementTree as ET,json
+reports=list((Path(sys.argv[1])/'sigsys-probe/build/test-results/testReleaseUnitTest').glob('TEST-*.xml'))
+assert len(reports)==2, 'Expected both companion test suites'
+counts={key:sum(int(ET.parse(p).getroot().get(key,'0')) for p in reports) for key in ('tests','failures','errors','skipped')}
+assert counts=={'tests':10,'failures':0,'errors':0,'skipped':0}, 'Companion test counts differ'
+print(json.dumps({'companion_java_test_results':counts}))
+PYTEST
 timeout --signal=TERM --kill-after=15s 5m "$ROOT/gradlew" --no-daemon :sigsys-probe:lintRelease \
     "${COMMON[@]}" > "$OUT/lint.log" 2>&1
 exit 0
