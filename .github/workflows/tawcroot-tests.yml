@@ -1,0 +1,30 @@
+# tawcroot host tests (x86_64 only: test.sh --abi=host refuses aarch64). Runs the
+# exec-path tests (exec via handler, exec_state, loader stack, proctitle);
+# the full suite is not run here.
+name: tawcroot-tests
+
+on:
+  push:
+    paths:
+      - 'tawcroot/**'
+      - '.github/workflows/tawcroot-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # gcc 14 for -std=c23 (the runner's gcc 13 lacks it); same base as build-apk.
+    container:
+      image: debian:trixie
+    steps:
+      - name: Toolchain
+        run: apt-get update -q && apt-get install -yq --no-install-recommends gcc libc6-dev linux-libc-dev make git ca-certificates
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Exec-path tests
+        run: tawcroot/test.sh '.*exec_via_handler.*' '.*exec_state.*' '.*loader_stack.*' '.*proctitle.*'

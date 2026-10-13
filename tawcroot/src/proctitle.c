@@ -6,6 +6,7 @@
 
 #include <sys/prctl.h>
 
+#include "exec_state.h"
 #include "io.h"
 #include "proctitle.h"
 #include "raw_sys.h"
@@ -17,9 +18,10 @@
 static char *g_arg_start;
 static char *g_arg_end;
 
-/* Bounce buffer: sized like syscalls_exec.c's collection caps (16 KB
- * path + 64 KB argv) plus shebang expansion slack. BSS, not stack. */
-#define TITLE_BOUNCE_SIZE ((16 + 64 + 4) * 1024)
+/* Bounce buffer: as large as the arg region can be. The exec handler's
+ * title (exec_handler.c EXEC_TITLE_BUF_SIZE) sizes the region and is one
+ * kernel argv string, so MAX_ARG_STRLEN bounds it. BSS, not stack. */
+#define TITLE_BOUNCE_SIZE TAWCROOT_EXEC_ARG_STRLEN
 static char g_bounce[TITLE_BOUNCE_SIZE];
 
 void tawcroot_proctitle_stash(int argc, char **argv)

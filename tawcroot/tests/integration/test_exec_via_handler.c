@@ -28,6 +28,7 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -347,6 +348,47 @@ test(exec_via_handler_collection_max_args_roundtrip)
 	for (int i = 0; i < NA; i++) args[n++] = "a";
 	args[n] = NULL;
 	test_int_eq(run(args), 42);
+}
+
+static char *long_arg(size_t len, char fill)
+{
+	char *s = malloc(len + 1);
+	if (!s) return NULL;
+	memset(s, fill, len);
+	s[len] = 0;
+	return s;
+}
+
+test(exec_via_handler_long_single_arg_roundtrip)
+{
+	/* One 100 KB argument, under the kernel's MAX_ARG_STRLEN (128 KB)
+	 * but over the old 16 KB per-string cap: callers pass whole scripts
+	 * this way (`bash -lc <45 KB guard batch>`, ninja's `sh -c <link>`). */
+	enum { LEN = 100 * 1024 };
+	char *big = long_arg(LEN, 'x');
+	test_true(big != NULL);
+	static char script[64];
+	snprintf(script, sizeof script, "[ \"${#1}\" = %d ] && exit 42; exit 8", (int)LEN);
+	const char *args[] = { "--exec-via-handler", "/bin/sh", "-c", script, "sh", big, NULL };
+	test_int_eq(run(args), 42);
+	free(big);
+}
+
+test(exec_via_handler_argv_over_one_kernel_string_roundtrip)
+{
+	/* 3 x 60 KB = 180 KB of argv: more than one kernel argv string can
+	 * hold, so the proctitle (argv[0] of the execveat into self) must be
+	 * truncated while the guest still receives every argument whole. */
+	enum { LEN = 60 * 1024 };
+	char *a = long_arg(LEN, 'a'), *b = long_arg(LEN, 'b'), *c = long_arg(LEN, 'c');
+	test_true(a && b && c);
+	static char script[96];
+	snprintf(script, sizeof script,
+	         "[ \"$#\" = 3 ] && [ \"${#1}${#2}${#3}\" = %d%d%d ] && exit 42; exit 8",
+	         (int)LEN, (int)LEN, (int)LEN);
+	const char *args[] = { "--exec-via-handler", "/bin/sh", "-c", script, "sh", a, b, c, NULL };
+	test_int_eq(run(args), 42);
+	free(a); free(b); free(c);
 }
 
 test(exec_via_handler_past_max_args_e2big_precommit)
