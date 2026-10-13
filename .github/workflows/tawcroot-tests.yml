@@ -16,7 +16,12 @@ jobs:
   host-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # gcc 14 for -std=c23 (the runner's gcc 13 lacks it); same base as build-apk.
+    container:
+      image: debian:trixie
     steps:
+      - name: Toolchain
+        run: apt-get update -q && apt-get install -yq --no-install-recommends gcc make git ca-certificates
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
