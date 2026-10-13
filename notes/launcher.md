@@ -225,6 +225,18 @@ with the same reference-not-command rule as pins.
   terminal. Failures show TAWC's own error dialog.
 - Exec lines and host paths never leave the app.
 
+## Single-window apps
+
+An entry with `SingleMainWindow=true` (freedesktop spec 1.5) that already
+has an open window is raised, not started again: `EntryLauncher.launch`
+looks the entry's id up in the open windows (`NativeBridge.openWindows`,
+matched by the window's resolved `desktopId`) and restarts that window's
+`tawc://activity/<id>` document task, which Android brings forward on its
+own display (`NativeBridge.raiseActivity`). Every launch path (list, pinned
+shortcut, Launch API) goes through it. The window's app_id has to resolve
+to the entry (see `resolve_metadata_for_app_id`). Windows don't record their
+install, so two installs that ship the same id share the raise.
+
 ## Icon resolution
 
 `iconPath` is always a decodable PNG or empty — that contract is what

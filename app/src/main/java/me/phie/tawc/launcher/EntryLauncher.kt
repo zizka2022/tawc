@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import me.phie.tawc.R
+import me.phie.tawc.compositor.NativeBridge
 import me.phie.tawc.install.Installation
 import me.phie.tawc.install.InstallationMethod
 import me.phie.tawc.install.InstallationStore
@@ -60,6 +61,14 @@ object EntryLauncher {
 
     /** Fire-and-forget launch of [entry] in [inst]'s rootfs. */
     fun launch(appContext: Context, inst: Installation, entry: LauncherEntry) {
+        // A single-window app (SingleMainWindow=true) that is already open
+        // comes to the front instead of starting a second copy.
+        if (entry.singleMainWindow) {
+            NativeBridge.openWindows().firstOrNull { it.desktopId == entry.id }?.let {
+                NativeBridge.raiseActivity(appContext, it.activityId)
+                return
+            }
+        }
         val method = InstallationMethod.forKey(appContext, inst.method)
         if (method == null) {
             // E.g. a proot install opened by a release build (which

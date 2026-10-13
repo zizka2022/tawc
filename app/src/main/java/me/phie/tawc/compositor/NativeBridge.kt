@@ -381,6 +381,28 @@ object NativeBridge {
     }
 
     /**
+     * Bring the window [activityId] to the front on the display it is on.
+     * Its document task is reused (same `tawc://activity/<id>` URI with
+     * `documentLaunchMode="intoExisting"`, and no MULTIPLE_TASK), so the
+     * running Activity only gets onNewIntent. Call from a foreground
+     * context (the launch trampoline), or Android may refuse the start.
+     */
+    @JvmStatic
+    fun raiseActivity(ctx: Context, activityId: String) {
+        ctx.startActivity(
+            Intent(ctx, CompositorActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                data = "tawc://activity/$activityId".toUri()
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT
+            },
+        )
+    }
+
+    /** Open windows, most recently focused first; empty while no compositor runs. */
+    @JvmStatic
+    fun openWindows(): List<OpenWindow> = serviceRef?.get()?.openWindows?.value.orEmpty()
+
+    /**
      * Called from native to finish (and remove from recents) the
      * [CompositorActivity] for an activityId. No-op if the Activity has
      * already been destroyed.

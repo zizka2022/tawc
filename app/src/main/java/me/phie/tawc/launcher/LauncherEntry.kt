@@ -30,6 +30,8 @@ data class LauncherEntry(
      * ones; empty only for malformed scanner output.
      */
     val path: String = "",
+    /** `SingleMainWindow=true`: a launch raises its open window, if any. */
+    val singleMainWindow: Boolean = false,
 ) {
     companion object {
         /**
@@ -86,6 +88,7 @@ data class LauncherEntry(
                                 terminal = o.optBoolean("terminal", false),
                                 iconPath = o.optString("iconPath"),
                                 path = o.optString("path"),
+                                singleMainWindow = o.optBoolean("singleMainWindow", false),
                             )
                         )
                     }
