@@ -97,6 +97,9 @@ pub struct Entry {
     /// vars) is left for `bash -lc` to handle.
     pub exec: String,
     pub terminal: bool,
+    /// `SingleMainWindow=true`: launching it while its window is open
+    /// raises that window instead of starting another copy.
+    pub single_main_window: bool,
     /// Raw `Icon=` value, unresolved. Resolution is deliberately lazy
     /// ([IconResolver::resolve]): it stats its way through the icon
     /// themes and, for SVG sources, rasterizes — so doing it for every
@@ -149,6 +152,7 @@ fn scan_entries(rootfs: &Path, launchable_only: bool) -> Vec<Entry> {
             comment,
             exec,
             terminal: de.terminal(),
+            single_main_window: de.single_main_window(),
             icon: de.icon().unwrap_or_default().to_string(),
             path: de.path.to_string_lossy().into_owned(),
         });
@@ -240,7 +244,7 @@ fn normalize_desktop_id(value: &str) -> String {
 }
 
 /// JSON-encode the scan result for the JNI boundary. Each element is an
-/// object: `{id, name, comment, exec, terminal, iconPath, path}`. Always
+/// object: `{id, name, comment, exec, terminal, singleMainWindow, iconPath, path}`. Always
 /// returns a valid JSON array (empty `[]` if the rootfs has no apps).
 ///
 /// This is where icons get resolved for the launcher list — Kotlin calls
@@ -258,6 +262,7 @@ pub fn scan_json(rootfs: &Path) -> String {
                 "comment": e.comment,
                 "exec": e.exec,
                 "terminal": e.terminal,
+                "singleMainWindow": e.single_main_window,
                 "iconPath": icons.resolve_string(&e.icon),
                 "path": e.path,
             })
