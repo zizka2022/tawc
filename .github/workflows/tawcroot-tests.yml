@@ -21,7 +21,7 @@ jobs:
       image: debian:trixie
     steps:
       - name: Toolchain
-        run: apt-get update -q && apt-get install -yq --no-install-recommends gcc make git ca-certificates
+        run: apt-get update -q && apt-get install -yq --no-install-recommends gcc libc6-dev linux-libc-dev make git ca-certificates
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
