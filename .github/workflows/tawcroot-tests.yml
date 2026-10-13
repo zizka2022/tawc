@@ -1,0 +1,24 @@
+# tawcroot host tests (x86_64 only: test.sh --abi=host refuses aarch64). Runs the
+# exec-path integration tests and the unit tests; the full suite is not run here.
+name: tawcroot-tests
+
+on:
+  push:
+    paths:
+      - 'tawcroot/**'
+      - '.github/workflows/tawcroot-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Exec-path and unit tests
+        run: tawcroot/test.sh 'integration/test_exec_via_handler::.*' 'unit/.*'

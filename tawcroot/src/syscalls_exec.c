@@ -15,9 +15,9 @@
  *     processes pass <100; the cap is generous and matches
  *     exec_state's serialization limit.
  *
- *   - String length is bounded by `MAX_STR` per entry (16 KB). Linux
- *     itself caps argv strings at MAX_ARG_STRLEN (32 pages) so most
- *     normal usage fits comfortably.
+ *   - String length is bounded by `MAX_ARG_STR` per argv/envp entry,
+ *     the kernel's own MAX_ARG_STRLEN (32 pages = 128 KB). Paths are
+ *     bounded by `MAX_STR` (16 KB).
  *
  *   - execveat's AT_SYMLINK_NOFOLLOW flag is intentionally not emulated
  *     yet; callers get -ENOSYS rather than a silently-followed symlink.
@@ -54,7 +54,8 @@
  * result — bash then prints "File name too long" and gives up. 16 KB
  * comfortably handles the bash + /etc/profile.d combinations we hit
  * on Arch. */
-#define MAX_STR      (16 * 1024)
+#define MAX_STR      TAWCROOT_EXEC_PATH_BYTES
+#define MAX_ARG_STR  TAWCROOT_EXEC_ARG_STRLEN
 
 /* Walk a guest pointer-array (argv or envp), copying each pointed-to
  * NUL-terminated string into a packed buffer and returning a parallel
@@ -102,7 +103,7 @@ static long collect_array(char *const *guest_arr,
 		/* Copy the string at p. */
 		size_t avail = strings_cap > off ? strings_cap - off : 0;
 		if (avail == 0) return TAWC_E2BIG;
-		size_t want = avail > MAX_STR ? MAX_STR : avail;
+		size_t want = avail > MAX_ARG_STR ? MAX_ARG_STR : avail;
 		long n = tawc_copy_string_from_guest(strings + off, want,
 		                                     (const char *)p);
 		if (n < 0) {
@@ -161,21 +162,21 @@ static long do_exec_path(const char *path,
 {
 	if (!path) return TAWC_EFAULT;
 
-	/* argv: 64 KB total, MAX_STR per string. argv overflow is rare —
+	/* argv: 256 KB total, MAX_ARG_STR per string. argv overflow is rare —
 	 * most callers pass a handful of short args — but ld-conf and
 	 * make recipes can occasionally chain dozens of long paths. */
-	static char argv_strings[64 * 1024];
+	static char argv_strings[TAWCROOT_EXEC_ARGV_BYTES];
 	static const char *argv_ptrs[MAX_ARGS + 1];
 	long argc = collect_array(guest_argv, argv_strings, sizeof argv_strings,
 	                          argv_ptrs, MAX_ARGS);
 	if (argc < 0) return argc;
 
-	/* envp: 256 KB total. See MAX_STR comment for sizing rationale.
+	/* envp: 256 KB total, MAX_ARG_STR per string.
 	 * Bash inherits a busy environment by the time it forks any child,
 	 * and we pack the whole thing into our memfd before the
 	 * execveat-into-self handoff — there's no opportunity to skip
 	 * strings that don't fit. */
-	static char envp_strings[256 * 1024];
+	static char envp_strings[TAWCROOT_EXEC_ENVP_BYTES];
 	static const char *envp_ptrs[MAX_ENV + 1];
 	long envc = collect_array(guest_envp, envp_strings, sizeof envp_strings,
 	                          envp_ptrs, MAX_ENV);

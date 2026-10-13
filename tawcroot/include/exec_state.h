@@ -96,6 +96,19 @@ extern "C" {
  * + profile.d environments. Each entry costs 4 bytes in the (BSS, not
  * stack) header. */
 #define TAWCROOT_EXEC_STATE_MAX_ARGS 4096
+
+/* Byte limits of the exec collection layer (syscalls_exec.c), shared with
+ * the buffers sized from them (exec_handler.c, proctitle.c).
+ *   ARG_STRLEN: one argv/envp string, NUL included. Matches the kernel's
+ *     MAX_ARG_STRLEN (32 pages). It was 16 KB, which broke real callers
+ *     that pass a script as one argument: Quickshell/Omarchy's batched
+ *     `bash -lc <script>` (45 KB) and ninja's `sh -c <link line>` (24 KB).
+ *   ARGV_BYTES / ENVP_BYTES: all argv / envp strings together.
+ *   PATH_BYTES: the exec path itself. */
+#define TAWCROOT_EXEC_ARG_STRLEN  (128 * 1024)
+#define TAWCROOT_EXEC_ARGV_BYTES  (256 * 1024)
+#define TAWCROOT_EXEC_ENVP_BYTES  (256 * 1024)
+#define TAWCROOT_EXEC_PATH_BYTES  (16 * 1024)
 #define TAWCROOT_EXEC_STATE_MAX_ENV  1024
 #define TAWCROOT_EXEC_STATE_MAX_BINDS 16
 #define TAWCROOT_EXEC_STATE_MAX_SHM   64

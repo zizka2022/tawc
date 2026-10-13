@@ -21,21 +21,25 @@
 #include "tawc_uapi.h"
 
 
-/* Proctitle staging buffer: path (16 KB) + space-joined argv (64 KB) +
- * shebang-expansion slack. Matches proctitle.c's bounce sizing. */
-#define EXEC_TITLE_BUF_SIZE  ((16 + 64 + 4) * 1024)
+/* Proctitle staging buffer (space-joined argv). The title becomes ONE
+ * kernel argv string (argv[0] of the execveat into self, see commit), so
+ * it is capped by the kernel's MAX_ARG_STRLEN, not by the larger argv
+ * total: past it the execveat itself would fail with E2BIG. Longer
+ * cmdlines are truncated (proctitle_apply copes). */
+#define EXEC_TITLE_BUF_SIZE  TAWCROOT_EXEC_ARG_STRLEN
 
 /* Cap on serialized exec_state size we'll write into a memfd. Sized to
  * hold the full header (offset arrays for MAX_ARGS args + MAX_ENV envs)
- * plus everything the collection layer (syscalls_exec.c) accepts: 16 KB
- * path + 64 KB argv + 256 KB envp, with slack, plus the proctitle
+ * plus everything the collection layer (syscalls_exec.c) accepts: path
+ * + argv + envp (TAWCROOT_EXEC_*_BYTES), with slack, plus the proctitle
  * string. Previously this was 64 KB
  * total, so any argv+envp over ~61 KB made the write -ENOSPC, which the
  * guest saw as a nonsensical execve()==ENOSPC for exactly the busy
  * environments the collection layer was sized for. BSS, not stack. */
 #define EXEC_STATE_BUF_SIZE                                            \
 	(sizeof(tawcroot_exec_state_header) +                         \
-	 (16 * 1024) + (64 * 1024) + (256 * 1024) +                    \
+	 TAWCROOT_EXEC_PATH_BYTES + TAWCROOT_EXEC_ARGV_BYTES +          \
+	 TAWCROOT_EXEC_ENVP_BYTES +                                     \
 	 EXEC_TITLE_BUF_SIZE + 8192)
 
 /* Validate an exec-probe fd the way execve(2) would validate the file:
