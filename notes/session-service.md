@@ -28,6 +28,18 @@ reports. The registry itself never touches Android (JVM-unit-tested);
 Terminal holds live in `TerminalSessions`, not the activity — sessions
 outlive it. Command holds follow the `Process`, so no caller cooperates.
 
+## Orphaned guests
+
+Android kills an app by killing the cgroups (`/apps/uid_<uid>/pid_<pid>`)
+of the processes it still tracks. If an app process dies without its
+group being killed, its guests survive in a group nothing tracks:
+force-stop, APK updates and later restarts all miss them, and they hold
+singletons (PipeWire, autostart supervisors) on the old APK's tawcroot.
+Seen on a Samsung S25 Ultra (Android 15): 31 guests outlived nine days of
+app restarts. `OrphanGuestReaper` runs first on the startup thread and
+TERMs, then KILLs, every same-uid process whose group leader is not a
+live app process; `RootfsAudio` waits for it.
+
 ## Service
 
 `SessionService`: FGS type `specialUse` (subtype `linux_session`),
