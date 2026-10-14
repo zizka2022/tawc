@@ -6,6 +6,7 @@ import me.phie.tawc.install.AudioInstallProvider
 import me.phie.tawc.install.Installation
 import me.phie.tawc.install.InstallationMethod
 import me.phie.tawc.install.InstallationStore
+import me.phie.tawc.session.OrphanGuestReaper
 import java.io.File
 import kotlin.concurrent.thread
 
@@ -33,6 +34,8 @@ internal object RootfsAudio {
         val app = context.applicationContext
         synchronized(this) { wanted = true }
         thread(name = "tawc-audio-session", isDaemon = true) {
+            // The script skips its start while an orphaned PipeWire runs.
+            OrphanGuestReaper.awaitDone(5_000)
             synchronized(this) {
                 if (!wanted || proc?.isAlive == true) return@thread
                 proc = try {

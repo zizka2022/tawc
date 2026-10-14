@@ -11,6 +11,7 @@ import me.phie.tawc.install.RootfsAutostart
 import me.phie.tawc.install.RootfsTmpSweeper
 import me.phie.tawc.install.TawcInstaller
 import me.phie.tawc.ops.OperationsNotificationCenter
+import me.phie.tawc.session.OrphanGuestReaper
 import me.phie.tawc.session.SessionService
 import kotlin.concurrent.thread
 
@@ -22,6 +23,7 @@ import kotlin.concurrent.thread
  *    `cacheDir` under storage pressure, so a 200 MB tarball can squat
  *    on disk for months without our own TTL ([BootstrapCache.sweepStale]).
  *  - Start the dev exec broker (debug builds only — [DevHooks]).
+ *  - Kill guests left by an earlier app process ([OrphanGuestReaper]).
  *  - Run rootfs autostart entries once an activity is up ([RootfsAutostart]).
  *
  * Per-install `nativeLibraryDir` (which moves between APKs as
@@ -45,6 +47,9 @@ class TawcApplication : Application() {
         // Before anything can spawn into a rootfs.
         SessionService.install(this)
         thread(name = "tawc-startup", isDaemon = true) {
+            // First: guests an earlier app process left behind would
+            // hold singletons the spawns below expect to start.
+            OrphanGuestReaper.reap(this)
             // Production ando broker (run Android commands from rootfs
             // guests; notes/ando.md). Per-distro: one listener per
             // ando-enabled install. All build types; alive whenever the
