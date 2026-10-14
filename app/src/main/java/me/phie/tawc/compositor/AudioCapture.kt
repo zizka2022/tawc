@@ -44,8 +44,10 @@ object AudioCapture {
     /** After the mic failed to open, readers get silence this long. */
     private const val RETRY_MS = 5000L
 
+    /** The live loop; a replaced one exits, so a quick stop + start
+     *  never leaves two writers on the pipe. */
     @Volatile private var thread: Thread? = null
-    @Volatile private var running = false
+    private val running get() = thread === Thread.currentThread()
 
     fun allowed(context: Context): Boolean =
         Settings.linuxMicrophone &&
@@ -56,13 +58,13 @@ object AudioCapture {
         if (thread != null) return
         val app = context.applicationContext
         val fifo = File(shareDir, FIFO_NAME)
-        running = true
-        thread = Thread({ run(app, fifo) }, "tawc-audio-in").also { it.start() }
+        val t = Thread({ run(app, fifo) }, "tawc-audio-in")
+        thread = t
+        t.start()
     }
 
     /** The loop notices within one poll timeout or one chunk. */
     fun stop() {
-        running = false
         thread = null
     }
 
