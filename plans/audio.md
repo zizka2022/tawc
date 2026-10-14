@@ -11,7 +11,14 @@ nothing installs them yet). tawcroot answers a sibling's `/proc/<pid>/root`
 with the guest root and sends Pulse's SCM_CREDENTIALS with the real uid, so
 PipeWire and pipewire-pulse work with stock config over unix sockets.
 Milestone 3: start/stop with the compositor is done; underrun logging is not.
-Capture is not started.
+Milestone 4 (capture) is implemented, unverified on device:
+`compositor/AudioCapture.kt` writes s16le/mono/48 kHz from an AudioRecord into
+the `audio-in-0` FIFO, read by a pipe-tunnel source (`tawc_input`, drop-in
+`50-tawc-input.conf`). Gated on the "Microphone for Linux apps" setting plus
+RECORD_AUDIO. The mic opens only while a Linux app records: with
+`tunnel.may-pause = false` the source reads the FIFO only while its node runs,
+so the bridge keeps the idle pipe full of silence and opens the mic when it
+drains, closing it once the pipe stays full for a second.
 
 ## Goal
 

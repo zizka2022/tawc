@@ -2,11 +2,13 @@ package me.phie.tawc.install
 
 import android.content.Context
 import me.phie.tawc.compositor.AudioBridge
+import me.phie.tawc.compositor.AudioCapture
 import java.io.File
 
 /**
- * Rootfs half of the audio bridge (plans/audio.md): a PipeWire drop-in
- * that loads a pipe-tunnel sink writing to [AudioBridge]'s FIFO, and
+ * Rootfs half of the audio bridge (plans/audio.md): PipeWire drop-ins
+ * that load a pipe-tunnel sink writing to [AudioBridge]'s FIFO and a
+ * pipe-tunnel source reading [AudioCapture]'s, and
  * [SESSION_PATH], the script [me.phie.tawc.compositor.RootfsAudio] runs
  * with the compositor. Both are inert until the distro's `pipewire`
  * (+ `wireplumber`, `pipewire-pulse`) packages are installed.
@@ -17,6 +19,7 @@ internal object AudioInstallProvider : TawcInstallProvider {
     const val SESSION_PATH = "/usr/lib/tawc/audio-session"
     /** A package-style drop-in: the distro's pipewire.conf reads it. */
     const val SINK_CONF_PATH = "/usr/share/pipewire/pipewire.conf.d/50-tawc-output.conf"
+    const val SOURCE_CONF_PATH = "/usr/share/pipewire/pipewire.conf.d/50-tawc-input.conf"
 
     override fun entries(context: Context, methodKey: String): List<TawcInstall> {
         val dir = File(context.filesDir, "audio").also { it.mkdirs() }
@@ -25,9 +28,12 @@ internal object AudioInstallProvider : TawcInstallProvider {
         session.setExecutable(true, false)
         val conf = File(dir, "50-tawc-output.conf")
         conf.writeText(SINK_CONF)
+        val sourceConf = File(dir, "50-tawc-input.conf")
+        sourceConf.writeText(SOURCE_CONF)
         return listOf(
             TawcInstall(session.absolutePath, SESSION_PATH, TawcInstall.Type.COPY),
             TawcInstall(conf.absolutePath, SINK_CONF_PATH, TawcInstall.Type.COPY),
+            TawcInstall(sourceConf.absolutePath, SOURCE_CONF_PATH, TawcInstall.Type.COPY),
         )
     }
 
@@ -64,6 +70,28 @@ internal object AudioInstallProvider : TawcInstallProvider {
               node.name = "tawc_output"
               node.description = "TAWC Android output"
               stream.props = { media.class = "Audio/Sink" }
+            }
+          }
+        ]
+    """.trimIndent() + "\n"
+
+    // may-pause stays false: the source then reads the FIFO only while
+    // its node runs, which is how AudioCapture knows to open the mic.
+    private val SOURCE_CONF = """
+        # TAWC audio bridge source: s16le/mono/48 kHz PCM from the phone
+        # microphone, written into the FIFO by the TAWC app while read.
+        context.modules = [
+          { name = libpipewire-module-pipe-tunnel
+            args = {
+              tunnel.mode = source
+              pipe.filename = "/usr/share/tawc/${AudioCapture.FIFO_NAME}"
+              audio.format = "S16LE"
+              audio.rate = 48000
+              audio.channels = 1
+              audio.position = [ MONO ]
+              node.name = "tawc_input"
+              node.description = "TAWC Android microphone"
+              stream.props = { media.class = "Audio/Source" }
             }
           }
         ]

@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.phie.tawc.MainActivity
 import me.phie.tawc.R
+import me.phie.tawc.compositor.AudioCapture
 import me.phie.tawc.install.InstallationStore
 import me.phie.tawc.tasks.ProcessScanner
 import java.util.concurrent.atomic.AtomicBoolean
@@ -160,6 +161,21 @@ class SessionService : Service() {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         } else {
             0
+        }
+        // The microphone type keeps Linux apps' recording live while no
+        // TAWC window is visible. Android refuses it when started from the
+        // background; recording then works only while a window shows.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && AudioCapture.allowed(this)) {
+            try {
+                ServiceCompat.startForeground(
+                    this, NOTIFICATION_ID, buildNotification(),
+                    type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+                )
+                return
+            } catch (e: RuntimeException) {
+                // SecurityException, or a ForegroundServiceTypeException.
+                Log.w(TAG, "foreground without microphone type: ${e.message}")
+            }
         }
         ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), type)
     }

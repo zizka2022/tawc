@@ -91,6 +91,7 @@ class CompositorService : Service() {
         if (hold == null) hold = SessionHolds.acquire(Reason.Compositor(0))
         ClipboardBridge.announceCurrentClip()
         AudioBridge.start(AppPaths.from(this).shareDir)
+        AudioCapture.start(this, AppPaths.from(this).shareDir)
         RootfsAudio.start(this)
         // Push the saved render-time settings into the compositor. The
         // Rust side defaults match the Settings defaults, so this is
@@ -137,6 +138,7 @@ class CompositorService : Service() {
     override fun onDestroy() {
         RootfsAudio.stop()
         AudioBridge.stop()
+        AudioCapture.stop()
         NativeBridge.nativeStopCompositor()
         compositorStopped()
         NativeBridge.detachService()

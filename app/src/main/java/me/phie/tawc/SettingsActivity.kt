@@ -1,6 +1,8 @@
 package me.phie.tawc
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.os.Bundle
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -13,6 +15,7 @@ import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import me.phie.tawc.compositor.NativeBridge
 import me.phie.tawc.install.AllFilesAccess
@@ -80,6 +83,10 @@ class SettingsActivity : AppCompatActivity() {
         )
         column.addView(
             buildSectionCard(getString(R.string.settings_compatibility), buildCompatibilitySettings()),
+            verticalLp(MATCH_PARENT, WRAP_CONTENT, bottomMargin = pad),
+        )
+        column.addView(
+            buildSectionCard(getString(R.string.settings_audio), buildMicrophoneCheckbox()),
             verticalLp(MATCH_PARENT, WRAP_CONTENT, bottomMargin = pad),
         )
         column.addView(
@@ -266,6 +273,47 @@ class SettingsActivity : AppCompatActivity() {
         }
         val detail = TextView(this).apply {
             text = getString(R.string.settings_gtk3_broken_menus_workaround_detail)
+            textSize = 13f
+            setPadding(cardPad / 2, 0, 0, cardPad / 2)
+        }
+        column.addView(checkbox, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        column.addView(detail, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        return column
+    }
+
+    private var micCheckbox: CheckBox? = null
+
+    private val requestMic = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        Settings.linuxMicrophone = granted
+        micCheckbox?.isChecked = granted
+    }
+
+    /** Asks for RECORD_AUDIO when switched on; a denial switches it back off. */
+    private fun buildMicrophoneCheckbox(): android.view.View {
+        val cardPad = (12 * resources.displayMetrics.density).toInt()
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val checkbox = CheckBox(this).apply {
+            text = getString(R.string.settings_microphone)
+            textSize = 15f
+            isChecked = Settings.linuxMicrophone
+            setPadding(0, cardPad / 2, 0, cardPad / 4)
+            setOnCheckedChangeListener { _, checked ->
+                val granted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED
+                if (checked && !granted) {
+                    requestMic.launch(Manifest.permission.RECORD_AUDIO)
+                } else {
+                    Settings.linuxMicrophone = checked
+                }
+            }
+        }
+        micCheckbox = checkbox
+        val detail = TextView(this).apply {
+            text = getString(R.string.settings_microphone_detail)
             textSize = 13f
             setPadding(cardPad / 2, 0, 0, cardPad / 2)
         }
