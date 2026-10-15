@@ -1422,6 +1422,12 @@ fn reconfigure_all_toplevels(state: &mut TawcState) {
             continue;
         };
         if state.configure_toplevel_for_host(toplevel, host_id).is_some() {
+            // A toplevel created before its Activity registered was sent the
+            // focused host's scale as a guess (the phone's for a window opening
+            // on a DeX monitor). Send its own host's scale with the size, so the
+            // first frame isn't rendered for the wrong density. Unchanged values
+            // are not re-sent.
+            state.send_surface_scale(toplevel.wl_surface());
             toplevel.send_pending_configure();
         }
     }
