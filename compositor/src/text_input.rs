@@ -445,6 +445,43 @@ impl TextInputState {
         }
     }
 
+    /// Whether `id` is an enabled text input of the client owning the
+    /// focused surface.
+    fn is_focused_enabled_instance(&self, id: &ObjectId) -> bool {
+        let Some(surface) = self.focused_surface.as_ref() else {
+            return false;
+        };
+        id.same_client_as(&surface.id())
+            && self.instance_state.get(id).is_some_and(|inst| inst.enabled)
+    }
+
+    /// zwp_text_input_v3.show_input_panel (v2): show the Android keyboard for
+    /// the focused, enabled field again, e.g. after the user dismissed it.
+    /// A hint per the protocol; requests from unfocused or disabled inputs
+    /// are ignored.
+    pub fn show_panel(&mut self, id: &ObjectId, focused_activity_id: Option<&ActivityId>) {
+        if !self.is_focused_enabled_instance(id) {
+            return;
+        }
+        let Some(activity) = focused_activity_id else {
+            return;
+        };
+        show_keyboard(activity);
+        self.keyboard_target = Some(activity.clone());
+    }
+
+    /// zwp_text_input_v3.hide_input_panel (v2): dismiss the Android keyboard
+    /// while the field stays enabled. `keyboard_target` is kept, so focus
+    /// handling does not bring it back on its own.
+    pub fn hide_panel(&mut self, id: &ObjectId) {
+        if !self.is_focused_enabled_instance(id) {
+            return;
+        }
+        if let Some(activity) = self.keyboard_target.as_ref() {
+            hide_keyboard(activity);
+        }
+    }
+
     fn focused_instance_enabled(&self) -> bool {
         let focused_client = match &self.focused_surface {
             Some(s) => s.id(),
@@ -948,6 +985,17 @@ impl Dispatch<ZwpTextInputV3, TextInputData> for TawcState {
                 state.text_input_state.set_pending_content_type(&id, hint.into(), purpose.into());
             }
             zwp_text_input_v3::Request::SetCursorRectangle { .. } => {}
+            zwp_text_input_v3::Request::ShowInputPanel => {
+                let focused_activity_id = state
+                    .text_input_state
+                    .focused_surface
+                    .as_ref()
+                    .and_then(|surface| state.desktop.host_for_surface(surface));
+                state.text_input_state.show_panel(&id, focused_activity_id.as_ref());
+            }
+            zwp_text_input_v3::Request::HideInputPanel => {
+                state.text_input_state.hide_panel(&id);
+            }
             zwp_text_input_v3::Request::Commit => {
                 let focused_activity_id = state
                     .text_input_state

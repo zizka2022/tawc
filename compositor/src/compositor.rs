@@ -362,7 +362,9 @@ impl TawcState {
         CursorShapeManagerState::new::<Self>(&dh);
 
         dh.create_global::<Self, AndroidWlegl, ()>(2, ());
-        dh.create_global::<Self, ZwpTextInputManagerV3, ()>(1, ());
+        // v2 adds show_input_panel/hide_input_panel, which bring back or
+        // dismiss the Android keyboard for an enabled field.
+        dh.create_global::<Self, ZwpTextInputManagerV3, ()>(2, ());
         // gfxstream-bridge custom Vulkan WSI. Disabled builds do not
         // advertise the protocol or link the gfxstream backend.
         #[cfg(feature = "gfxstream")]
